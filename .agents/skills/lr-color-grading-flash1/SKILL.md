@@ -1,6 +1,6 @@
 ---
 name: lr-color-grading-flash1
-description: Compatibility executor for applying an already selected lr-creative-grading GradeSession through one hardened Lightroom bridge transaction with embedded value verification, without reanalyzing or recommending styles. Use when the user asks for Flash1, rapid application, minimal UI, or efficient global Lightroom grading after choosing a candidate.
+description: Compatibility executor for applying an already selected lr-creative-grading GradeSession through one hardened Lightroom bridge transaction with embedded value verification, without reanalyzing or recommending styles. Use only when the user explicitly asks for Flash1 or explicitly asks to apply an already SELECTED GradeSession; do not use for generic faster grading or before selection.
 ---
 
 # LR 调色高速执行兼容入口
@@ -16,9 +16,7 @@ Read:
 - ../lr-creative-grading/references/parameter-mapping.md;
 - ../lr-creative-grading/references/risk-qc.md.
 
-Validate before and after execution:
-
-    python ../lr-creative-grading/scripts/creative_grade.py validate <session-path>
+Resolve ../lr-creative-grading/scripts/creative_grade.py from this SKILL.md directory. Validate before execution, then use its apply command; do not call the bridge with an ad hoc wrapper.
 
 The existing selection is the one user approval. Do not ask for separate Basic, Color, Effects, preset, or strength confirmations.
 
@@ -26,10 +24,10 @@ The existing selection is the one user approval. Do not ask for separate Basic, 
 
 1. Read capabilities and get_target_photo.
 2. Match photo_id, filename, source_digest when available, and baseline_edit_digest to GradeSession.
-3. Reject unknown, out-of-range, unsupported, or undeclared parameters before any write.
+3. Require the exact selected candidate, strength, recipe hash, preview artifact digest, and live-applicable target. Reject unknown, out-of-range, unsupported, undeclared, or unreviewed work before any write.
 4. Read the sparse baseline settings that the selected recipe owns.
 5. Submit one apply_transaction containing the snapshot request, optional preset UUID, and complete dynamic parameter group.
-6. Record SNAPSHOTTED only after snapshot confirmation and APPLIED only after the transaction response.
+6. Let the apply command validate and merge the transaction execution_patch, then atomically persist SNAPSHOTTED and APPLIED. Never edit GradeSession JSON directly.
 7. Record the apply_transaction response's embedded immediate value check while keeping desired, applied, and readback values separate. Do not call the public readback tool yet, because the shared session must pass through PERSON_PROTECTED first.
 8. If any parameter partially fails, the target changes, or the embedded check differs outside tolerance, roll back and record ROLLED_BACK.
 9. Return at APPLIED and hand person protection or the no-person not_required transition to the lr-creative-grading orchestrator. After PERSON_PROTECTED, the orchestrator calls public readback once for final VERIFIED state.

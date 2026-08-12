@@ -5,7 +5,8 @@
     "filename": "DSC_4458.JPG",
     "source_digest": "a553f27c457a262e874bc8754ef2c97905d4a542322d1d33ebbb4b6563cba90f",
     "proxy_digest": "a553f27c457a262e874bc8754ef2c97905d4a542322d1d33ebbb4b6563cba90f",
-    "baseline_edit_digest": null
+    "baseline_edit_digest": null,
+    "live_applicable": false
   },
   "photo_dna": {
     "analysis_version": "photodna-1.0.0",
@@ -977,56 +978,16 @@
       ]
     }
   ],
-  "selection": {
-    "candidate_id": "native",
-    "requested_strength": 100.0
-  },
+  "selection": null,
   "execution": {
-    "state": "SELECTED",
+    "state": "PREVIEWED",
     "state_history": [
       "ACQUIRE",
       "ANALYZED",
-      "PREVIEWED",
-      "SELECTED"
+      "PREVIEWED"
     ],
     "transaction_id": null,
-    "desired": {
-      "candidate_id": "native",
-      "requested_strength": 100.0,
-      "strength_factor": 1.0,
-      "recipe_hash": "2ec1caca42eb4e1e6fba69c6b4baaa3b53c8eba3f491dc6cc19271f48187fb73",
-      "mode": "baseline_relative",
-      "parameter_specs": {
-        "contrast": {
-          "operation": "delta",
-          "value": 8.0,
-          "interpolation": "linear"
-        },
-        "vibrance": {
-          "operation": "delta",
-          "value": 10.0,
-          "interpolation": "linear"
-        },
-        "clarity": {
-          "operation": "delta",
-          "value": 3.0,
-          "interpolation": "linear"
-        },
-        "temperature": {
-          "operation": "delta",
-          "value": 300.0,
-          "interpolation": "linear"
-        }
-      },
-      "compiled_parameters": null,
-      "compilation": "bridge_reads_pinned_baseline_then_interpolates",
-      "people_protection": {
-        "required": false,
-        "preserve_amount": 0.35,
-        "strategy": "global_skin_guard_then_single_reverse_mask_if_needed",
-        "regions_digest": "f1797ed70653cdf39ae95d18428c614f5c859388e373eaca9b5fada372b425bd"
-      }
-    },
+    "desired": {},
     "applied": {},
     "readback": {},
     "failures": [],
@@ -1041,7 +1002,7 @@
       "strength": 82.0,
       "cache_key": "c286ba3c45e2def5a25387520bb8071786f142b3f332892b446991b8ced581df",
       "cache_hit": false,
-      "recipe_hash": "dca92d629c73017d1bb92309d341ff28728ece599e83f8bab95a662ce427a051",
+      "recipe_hash": "31e4e91058bf7b9fc5ad3934c6729aab00f254087f3b6776899a21d76af5fd33",
       "renderer_version": "offline-oklab-1.0.0",
       "qc": {
         "dimensions": {
@@ -1071,14 +1032,16 @@
         "environment_mean_change": null,
         "people_mask_coverage": null
       },
-      "detected_risks": []
+      "detected_risks": [],
+      "preview_render_hash": "dca92d629c73017d1bb92309d341ff28728ece599e83f8bab95a662ce427a051",
+      "artifact_digest": "c264ce85546db7d365f8b18c704fbc5afd157c28a222e00c236c4b6944ea0653"
     },
     "amplify": {
       "path": "grading_sessions\\DSC_4458\\previews\\cache\\amplify-2820e035f66cb67cd487b73eeca64fc42b4628165be94b5dbe661abebfe8c52d.jpg",
       "strength": 118.0,
       "cache_key": "2820e035f66cb67cd487b73eeca64fc42b4628165be94b5dbe661abebfe8c52d",
       "cache_hit": false,
-      "recipe_hash": "c596cf08115b122d509787a9aa51ceacecb2f1031688d178ed27633b01eb56c6",
+      "recipe_hash": "832e5a0d496d7234065c70889404464976b0d36086b01f7b412ea0217436031b",
       "renderer_version": "offline-oklab-1.0.0",
       "qc": {
         "dimensions": {
@@ -1108,14 +1071,16 @@
         "environment_mean_change": null,
         "people_mask_coverage": null
       },
-      "detected_risks": []
+      "detected_risks": [],
+      "preview_render_hash": "c596cf08115b122d509787a9aa51ceacecb2f1031688d178ed27633b01eb56c6",
+      "artifact_digest": "3b90259b0931854965a8063fee9e30d5cf868b7b47acf62afbcdba858015b225"
     },
     "break": {
       "path": "grading_sessions\\DSC_4458\\previews\\cache\\break-36a8eccb5ccffbec53883faa3b27782c878e81a80be45df1bdcf53163b437b6f.jpg",
       "strength": 152.0,
       "cache_key": "36a8eccb5ccffbec53883faa3b27782c878e81a80be45df1bdcf53163b437b6f",
       "cache_hit": false,
-      "recipe_hash": "26df163b471f39d9f99706b0e3580eb9af19630ad87df99e41f993bfbf97b00c",
+      "recipe_hash": "de045cbe75316ba3cefa076fcecf1460c8df09ae03723453ba572f206cf15f05",
       "renderer_version": "offline-oklab-1.0.0",
       "qc": {
         "dimensions": {
@@ -1145,11 +1110,15 @@
         "environment_mean_change": null,
         "people_mask_coverage": null
       },
-      "detected_risks": []
+      "detected_risks": [],
+      "preview_render_hash": "26df163b471f39d9f99706b0e3580eb9af19630ad87df99e41f993bfbf97b00c",
+      "artifact_digest": "b79913dc3b20a5bb012d6f520392e47caad5ed4e51b6361e5a7e01d9cc189346"
     },
     "contact_sheet": "grading_sessions\\DSC_4458\\previews\\DSC_4458-creative-contact-sheet.jpg"
   },
   "collection": {
     "saved": false
-  }
+  },
+  "session_id": "cd13537e-75cf-4109-a197-ee6b08706849",
+  "revision": 1
 }

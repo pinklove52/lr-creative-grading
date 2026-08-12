@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -24,9 +25,13 @@ from creative_engine import (  # noqa: E402
     recipe_hash,
     render_candidate,
     render_session,
+    load_session,
+    migrate_preview_contract,
+    save_session,
     select_candidate,
     validate_session,
 )
+import creative_grade  # noqa: E402
 
 
 def _synthetic_rgb(width: int = 128, height: int = 96) -> np.ndarray:
@@ -129,6 +134,35 @@ class PhotoDNATests(unittest.TestCase):
         self.assertIn("duotone_palette_compression", first["candidates"][2]["logic"])
         self.assertIn("green fog cast", json.dumps(first["candidates"][0]["rationale"]))
 
+    def test_conflicting_semantics_change_operator_graph_and_recipes(self) -> None:
+        warm = create_session(
+            self.image,
+            semantic_hints={
+                "subject": "child portrait",
+                "lighting": "golden warm backlight",
+                "mood": "luminous joyful",
+                "materials": ["soft skin"],
+                "preserve": ["warm skin"],
+                "amplify": ["golden rim light"],
+                "break": ["duotone"],
+            },
+        )
+        cold = create_session(
+            self.image,
+            semantic_hints={
+                "subject": "steel bridge",
+                "lighting": "cold cyan storm light",
+                "mood": "dark ominous",
+                "materials": ["rough metal"],
+                "preserve": ["cold steel"],
+                "amplify": ["cyan silhouette"],
+                "break": ["low-key shadow swallowing"],
+            },
+        )
+        for index in (0, 1, 2):
+            self.assertNotEqual(warm["candidates"][index]["operator_graph"], cold["candidates"][index]["operator_graph"])
+            self.assertNotEqual(warm["candidates"][index]["lr_recipe"], cold["candidates"][index]["lr_recipe"])
+
     def test_live_target_filename_can_be_preserved_when_proxy_is_temporary(self) -> None:
         session = create_session(self.image, filename="IMG_0001.CR3")
         self.assertEqual("IMG_0001.CR3", session["target"]["filename"])
@@ -180,6 +214,26 @@ class CandidateAndPreviewTests(unittest.TestCase):
         second = render_session(session, self.image, output, long_edge=512)
         self.assertTrue(all(second[key]["cache_hit"] for key in ("native", "amplify", "break")))
         self.assertEqual(first["native"]["cache_key"], second["native"]["cache_key"])
+        with Image.open(first["contact_sheet"]) as sheet, Image.open(first["native"]["path"]) as preview:
+            self.assertGreater(sheet.width, preview.width * 3)
+            expected_card_width = round(preview.width * min(720, preview.height) / preview.height)
+            self.assertLess(abs(sheet.width - expected_card_width * 4 - 8 * 3), 8)
+
+    def test_selection_requires_exact_reviewed_strength_and_hash(self) -> None:
+        session = create_session(self.image)
+        render_session(session, self.image, self.root / "reviewed", long_edge=512)
+        with self.assertRaisesRegex(SessionValidationError, "not previewed"):
+            select_candidate(session, "native", 100)
+        session["previews"]["native"]["recipe_hash"] = "wrong"
+        with self.assertRaisesRegex(SessionValidationError, "recipe_hash"):
+            select_candidate(session, "native")
+
+    def test_selection_rejects_state_without_preview_artifacts(self) -> None:
+        session = create_session(self.image)
+        session["execution"]["state"] = "PREVIEWED"
+        session["execution"]["state_history"].append("PREVIEWED")
+        with self.assertRaisesRegex(SessionValidationError, "rendered preview"):
+            select_candidate(session, "break", 200)
 
     def test_people_region_plan_participates_in_preview_cache_key(self) -> None:
         left = create_session(
@@ -273,7 +327,7 @@ class GradeSessionTests(unittest.TestCase):
         self.assertEqual("stable-lightroom-identity-digest", session["target"]["source_digest"])
         self.assertNotEqual(session["target"]["source_digest"], session["target"]["proxy_digest"])
         self.assertEqual(session["target"]["proxy_digest"], session["photo_dna"]["source_digest"])
-        render_session(session, self.image, self.root / "previews", long_edge=256)
+        render_session(session, self.image, self.root / "previews", strengths={"break": 170}, long_edge=256)
         select_candidate(session, "break", 170)
         self.assertEqual("SELECTED", session["execution"]["state"])
         self.assertEqual("break", session["execution"]["desired"]["candidate_id"])
@@ -309,7 +363,7 @@ class GradeSessionTests(unittest.TestCase):
 
     def test_explicit_collect_saves_recipe_dna_preview_and_readback(self) -> None:
         session = create_session(self.image)
-        render_session(session, self.image, self.root / "previews", long_edge=256)
+        render_session(session, self.image, self.root / "previews", strengths={"amplify": 112}, long_edge=256)
         select_candidate(session, "amplify", 112)
         session["execution"]["state_history"].extend(["SNAPSHOTTED", "APPLIED", "PERSON_PROTECTED", "VERIFIED"])
         session["execution"]["state"] = "VERIFIED"
@@ -326,6 +380,80 @@ class GradeSessionTests(unittest.TestCase):
     def test_recipe_hash_changes_with_strength(self) -> None:
         candidate = create_session(self.image)["candidates"][0]
         self.assertNotEqual(recipe_hash(candidate, 80), recipe_hash(candidate, 81))
+
+    def test_atomic_session_save_increments_revision_and_rejects_stale_writer(self) -> None:
+        destination = self.root / "grade-session.json"
+        session = create_session(self.image)
+        save_session(session, destination)
+        self.assertEqual(0, session["revision"])
+        first = load_session(destination)
+        stale = load_session(destination)
+        render_session(first, self.image, self.root / "atomic-previews", long_edge=256)
+        save_session(first, destination, expected_revision=0)
+        self.assertEqual(1, first["revision"])
+        render_session(stale, self.image, self.root / "stale-previews", long_edge=256)
+        with self.assertRaisesRegex(SessionValidationError, "stale GradeSession revision"):
+            save_session(stale, destination, expected_revision=0)
+        self.assertTrue(destination.with_suffix(".json.bak").exists())
+
+    def test_post_protection_digest_is_reacquired_and_used_for_readback(self) -> None:
+        session = create_session(
+            self.image,
+            photo_id="photo-7",
+            source_digest_override="stable-lightroom-identity-digest",
+            baseline_edit_digest="base-9",
+        )
+        session["execution"]["transaction_id"] = "tx-7"
+        session["execution"]["readback"] = {"baseline_edit_digest": "after-global-grade"}
+        current = {
+            "photo_id": "photo-7",
+            "filename": self.image.name,
+            "source_digest": "stable-lightroom-identity-digest",
+            "baseline_edit_digest": "after-person-mask",
+        }
+        with mock.patch.object(creative_grade, "_call_bridge", return_value=current):
+            digest = creative_grade._capture_post_protection_digest(session)
+        session["execution"]["person_protection"]["post_edit_digest"] = digest
+        reference = creative_grade._transaction_reference(session)
+        self.assertEqual("after-person-mask", reference["expected_current_edit_digest"])
+
+    def test_post_protection_digest_rejects_changed_target_identity(self) -> None:
+        session = create_session(
+            self.image,
+            photo_id="photo-7",
+            source_digest_override="stable-lightroom-identity-digest",
+            baseline_edit_digest="base-9",
+        )
+        changed = {
+            "photo_id": "different-photo",
+            "filename": self.image.name,
+            "source_digest": "stable-lightroom-identity-digest",
+            "baseline_edit_digest": "after-person-mask",
+        }
+        with mock.patch.object(creative_grade, "_call_bridge", return_value=changed):
+            with self.assertRaisesRegex(SessionValidationError, "photo_id"):
+                creative_grade._capture_post_protection_digest(session)
+
+    def test_legacy_migration_revokes_unreviewed_selection(self) -> None:
+        session = create_session(self.image)
+        render_session(session, self.image, self.root / "legacy-previews", long_edge=256)
+        select_candidate(session, "native")
+        session["selection"]["requested_strength"] = 100.0
+        session["execution"]["desired"]["requested_strength"] = 100.0
+        session["execution"]["desired"]["strength_factor"] = 1.0
+        session["execution"]["desired"]["recipe_hash"] = recipe_hash(session["candidates"][0], 100.0)
+        result = migrate_preview_contract(session)
+        self.assertEqual("PREVIEWED", result["state"])
+        self.assertIsNone(session["selection"])
+        self.assertEqual({}, session["execution"]["desired"])
+
+    def test_legacy_migration_records_preview_artifact_digest(self) -> None:
+        session = create_session(self.image)
+        render_session(session, self.image, self.root / "legacy-digest", long_edge=256)
+        del session["previews"]["native"]["artifact_digest"]
+        result = migrate_preview_contract(session)
+        self.assertTrue(any("artifact_digest" in change for change in result["changes"]))
+        validate_session(session)
 
     def test_parameter_compiler_obeys_zero_design_and_extrapolated_strength(self) -> None:
         specs = {

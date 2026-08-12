@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import shutil
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +27,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 SESSION_VERSION = "1.0.0"
 LONG_EDGE_DEFAULT = 1800
 ANALYSIS_LONG_EDGE = 1024
-PREVIEW_RENDERER_VERSION = "offline-oklab-1.0.0"
+PREVIEW_RENDERER_VERSION = "offline-oklab-1.1.0"
 STATE_ORDER = (
     "ACQUIRE",
     "ANALYZED",
@@ -63,7 +65,9 @@ class PreviewResult:
     strength: float
     cache_key: str
     cache_hit: bool
-    preview_recipe_hash: str
+    recipe_hash: str
+    preview_render_hash: str
+    artifact_digest: str
     qc: dict[str, Any]
     detected_risks: list[dict[str, Any]]
 
@@ -481,6 +485,80 @@ def _normalize_semantic_hints(semantic_hints: Mapping[str, Any] | None) -> dict[
     return normalized
 
 
+def _keyword_direction(text: str, positive: Sequence[str], negative: Sequence[str]) -> int:
+    positive_hits = sum(1 for term in positive if term in text)
+    negative_hits = sum(1 for term in negative if term in text)
+    return 1 if positive_hits > negative_hits else -1 if negative_hits > positive_hits else 0
+
+
+def _derive_creative_intent(
+    hints: Mapping[str, Any],
+    tone: Mapping[str, Any],
+    color: Mapping[str, Any],
+    texture: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Normalize free-form semantic evidence into a deterministic operator intent."""
+    text = _canonical_json(hints).lower()
+    temperature = _keyword_direction(
+        text,
+        ("warm", "golden", "amber", "sunset", "暖", "金色", "夕阳"),
+        ("cool", "cold", "cyan", "blue", "nocturnal", "冷", "青蓝", "夜"),
+    )
+    if temperature == 0:
+        axis = float(color.get("cold_warm_axis", 0.0))
+        temperature = 0 if abs(axis) < 0.04 else (1 if axis > 0 else -1)
+    tone_direction = _keyword_direction(
+        text,
+        ("luminous", "high key", "high-key", "bright", "airy", "明亮", "高调", "通透"),
+        ("low key", "low-key", "dark", "nocturnal", "shadow swallowing", "低调", "暗", "吞黑"),
+    )
+    contrast_direction = _keyword_direction(
+        text,
+        ("dramatic", "hard", "graphic", "silhouette", "crisp", "硬朗", "戏剧", "剪影"),
+        ("soft", "fog", "mist", "delicate", "柔和", "雾", "细腻"),
+    )
+    saturation_direction = _keyword_direction(
+        text,
+        ("vivid", "neon", "saturated", "acid", "鲜艳", "霓虹", "高饱和"),
+        ("muted", "faded", "documentary", "desaturated", "克制", "褪色", "低饱和"),
+    )
+    texture_direction = _keyword_direction(
+        text,
+        ("steel", "rough", "crisp", "grain", "texture", "金属", "粗粝", "纹理"),
+        ("soft", "delicate", "smooth", "mist", "柔软", "细腻", "雾"),
+    )
+    if texture_direction == 0:
+        texture_direction = 1 if texture.get("strength") != "high" else 0
+    if any(term in text for term in ("duotone", "双色")):
+        break_operator = "duotone_palette_compression"
+    elif any(term in text for term in ("low key", "low-key", "shadow swallowing", "低调", "吞黑")):
+        break_operator = "low_key_cross_process"
+    elif any(term in text for term in ("poster", "band", "false color", "断阶", "假色")):
+        break_operator = "hard_surface_false_color"
+    elif tone.get("key") == "low":
+        break_operator = "low_key_cross_process"
+    elif texture.get("strength") == "high":
+        break_operator = "hard_surface_false_color"
+    elif float(color.get("mean_chroma", 0.0)) < 0.045:
+        break_operator = "duotone_palette_compression"
+    else:
+        break_operator = "triadic_channel_shift"
+    preserve = hints.get("preserve", [])
+    protected_colors = [str(item) for item in preserve] if isinstance(preserve, list) else [str(preserve)]
+    intent = {
+        "subject_priority": str(hints.get("subject", "undetermined")),
+        "protected_colors": protected_colors,
+        "temperature_direction": temperature,
+        "tone_direction": tone_direction,
+        "contrast_direction": contrast_direction,
+        "saturation_direction": saturation_direction,
+        "texture_direction": texture_direction,
+        "break_operator": break_operator,
+    }
+    intent["intent_digest"] = _sha256_bytes(_canonical_json(intent).encode("utf-8"))
+    return intent
+
+
 def analyze_photo(
     image_path: str | Path,
     *,
@@ -502,6 +580,7 @@ def analyze_photo(
     dominant = int(np.argmax(histogram))
     hints = _normalize_semantic_hints(semantic_hints)
     automatic_mood = [tone["key"], tone["contrast"], texture["strength"]]
+    creative_intent = _derive_creative_intent(hints, tone, {"cold_warm_axis": _temperature_axis(histogram), "mean_chroma": saturation_mean}, texture)
     return {
         "analysis_version": "photodna-1.0.0",
         "source_digest": source_digest(path),
@@ -519,6 +598,7 @@ def analyze_photo(
                 "amplify": hints.get("amplify", []),
                 "break": hints.get("break", []),
             },
+            "creative_intent": creative_intent,
             "mood_cues": automatic_mood,
             "semantic_hints": hints,
             "limitations": ["No semantic classifier is bundled; people must be supplied explicitly."],
@@ -562,6 +642,7 @@ def _candidate(
     parameters: dict[str, dict[str, Any]],
     risks: list[dict[str, Any]],
     people: Mapping[str, Any],
+    creative_intent: Mapping[str, Any],
 ) -> dict[str, Any]:
     protection_amount = {"native": 0.35, "amplify": 0.60, "break": 0.92}[candidate_id]
     return {
@@ -571,6 +652,12 @@ def _candidate(
         "title": label,
         "logic": logic,
         "intent": logic,
+        "operator_graph": {
+            "intent_digest": creative_intent["intent_digest"],
+            "creative_intent": dict(creative_intent),
+            "offline_nodes": [operation["op"] for operation in offline_ops],
+            "lightroom_nodes": sorted(parameters),
+        },
         "rationale": [],
         "design_strength": default_strength,
         "intensity": {"minimum": 0.0, "design": 100.0, "default": default_strength, "maximum": 200.0},
@@ -600,10 +687,21 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
     people = photo_dna["protected_people"]
     semantics = photo_dna.get("semantics", {})
     guidance = semantics.get("creative_guidance", {})
+    creative_intent = semantics.get("creative_intent", {})
     axis = float(color["cold_warm_axis"])
-    temperature_direction = 0 if abs(axis) < 0.04 else (1 if axis > 0 else -1)
+    temperature_direction = int(creative_intent.get("temperature_direction", 0 if abs(axis) < 0.04 else (1 if axis > 0 else -1)))
+    contrast_direction = int(creative_intent.get("contrast_direction", 0))
+    saturation_direction = int(creative_intent.get("saturation_direction", 0))
+    texture_direction = int(creative_intent.get("texture_direction", 0))
+    tone_direction = int(creative_intent.get("tone_direction", 0))
     dominant = int(color["dominant_hue"])
     dynamic_range = float(tone["dynamic_range_p05_p95"])
+    native_contrast = (8.0 if dynamic_range < 0.58 else 4.0) + contrast_direction * 2.0
+    native_vibrance = 10.0 + saturation_direction * 3.0
+    native_clarity = (3.0 if texture["strength"] != "high" else 0.0) + texture_direction * 1.5
+    native_exposure = tone_direction * 0.12
+    native_offline_contrast = (0.08 if dynamic_range < 0.58 else 0.035) + contrast_direction * 0.025
+    native_offline_saturation = 0.08 + saturation_direction * 0.035
 
     native = _candidate(
         "native",
@@ -612,18 +710,21 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
         82.0,
         [
             {"op": "oklch_harmony_nudge", "anchor_hue": harmony["anchor_hue"], "amount": 0.12},
-            {"op": "contrast", "amount": 0.08 if dynamic_range < 0.58 else 0.035},
-            {"op": "saturation", "amount": 0.08},
+            {"op": "contrast", "amount": native_offline_contrast},
+            {"op": "saturation", "amount": native_offline_saturation},
             {"op": "temperature", "amount": 0.035 * temperature_direction},
+            {"op": "exposure", "amount": 0.05 * tone_direction},
         ],
         {
-            "contrast": _parameter("delta", 8.0 if dynamic_range < 0.58 else 4.0),
-            "vibrance": _parameter("delta", 10.0),
-            "clarity": _parameter("delta", 3.0 if texture["strength"] != "high" else 0.0),
+            "contrast": _parameter("delta", native_contrast),
+            "vibrance": _parameter("delta", native_vibrance),
+            "clarity": _parameter("delta", native_clarity),
             "temperature": _parameter("delta", 300.0 * temperature_direction),
+            "exposure": _parameter("delta", native_exposure),
         },
         [_risk("warning", "preview_renderer_difference", "Offline preview is directional and must be read back in Lightroom.")],
         people,
+        creative_intent,
     )
     amplify = _candidate(
         "amplify",
@@ -632,17 +733,19 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
         118.0,
         [
             {"op": "oklch_harmony_nudge", "anchor_hue": harmony["anchor_hue"], "amount": 0.30},
-            {"op": "contrast", "amount": 0.20},
-            {"op": "saturation", "amount": 0.24},
+            {"op": "contrast", "amount": 0.20 + contrast_direction * 0.05},
+            {"op": "saturation", "amount": 0.24 + saturation_direction * 0.07},
             {"op": "temperature", "amount": 0.095 * temperature_direction},
-            {"op": "local_texture", "amount": 0.14 if texture["strength"] != "high" else 0.06},
+            {"op": "local_texture", "amount": (0.14 if texture["strength"] != "high" else 0.06) + texture_direction * 0.025},
+            {"op": "exposure", "amount": 0.10 * tone_direction},
         ],
         {
-            "contrast": _parameter("delta", 22.0),
-            "vibrance": _parameter("delta", 24.0),
-            "clarity": _parameter("delta", 12.0 if texture["strength"] != "high" else 5.0),
+            "contrast": _parameter("delta", 22.0 + contrast_direction * 5.0),
+            "vibrance": _parameter("delta", 24.0 + saturation_direction * 6.0),
+            "clarity": _parameter("delta", (12.0 if texture["strength"] != "high" else 5.0) + texture_direction * 3.0),
             "dehaze": _parameter("delta", 7.0),
             "temperature": _parameter("delta", 900.0 * temperature_direction),
+            "exposure": _parameter("delta", 0.25 * tone_direction),
             "color_grade_global_hue": _parameter("target", float(harmony["anchor_hue"]), "circular_degrees"),
             "color_grade_global_saturation": _parameter("delta", 8.0),
         },
@@ -651,20 +754,12 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
             _risk("warning", "preview_renderer_difference", "Offline preview is directional and must be read back in Lightroom."),
         ],
         people,
+        creative_intent,
     )
 
     break_hint = guidance.get("break", [])
-    break_hint_text = _canonical_json(break_hint).lower()
-    if "duotone" in break_hint_text or "双色" in break_hint_text:
-        force_mode = "duotone"
-    elif "low key" in break_hint_text or "low-key" in break_hint_text or "低调" in break_hint_text or "吞黑" in break_hint_text:
-        force_mode = "low_key"
-    elif "poster" in break_hint_text or "band" in break_hint_text or "断阶" in break_hint_text or "假色" in break_hint_text:
-        force_mode = "hard_surface"
-    else:
-        force_mode = "auto"
-
-    if force_mode == "duotone" or (force_mode == "auto" and (float(color["mean_chroma"]) < 0.045 or harmony["rule"] == "monochromatic")):
+    selected_break_operator = creative_intent.get("break_operator", "triadic_channel_shift")
+    if selected_break_operator == "duotone_palette_compression":
         break_mode = "duotone_palette_compression"
         targets = [int((dominant + 205) % 360), int((dominant + 28) % 360)]
         break_ops = [
@@ -672,7 +767,7 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
             {"op": "crush_blacks", "amount": 0.26},
             {"op": "grain", "amount": 0.16},
         ]
-    elif force_mode == "low_key" or (force_mode == "auto" and tone["key"] == "low"):
+    elif selected_break_operator == "low_key_cross_process":
         break_mode = "low_key_cross_process"
         targets = [int((dominant + 150) % 360), int((dominant + 315) % 360)]
         break_ops = [
@@ -681,7 +776,7 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
             {"op": "crush_blacks", "amount": 0.36},
             {"op": "grain", "amount": 0.12},
         ]
-    elif force_mode == "hard_surface" or (force_mode == "auto" and texture["strength"] == "high"):
+    elif selected_break_operator == "hard_surface_false_color":
         break_mode = "hard_surface_false_color"
         targets = [int((dominant + 165) % 360), int((dominant + 280) % 360), dominant]
         break_ops = [
@@ -732,6 +827,7 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
             _risk("warning", "preview_renderer_difference", "Offline preview is directional and must be read back in Lightroom."),
         ],
         people,
+        creative_intent,
     )
     native["rationale"] = [
         f"Detected {harmony['rule']} harmony around {harmony['anchor_hue']}°.",
@@ -763,12 +859,17 @@ def create_session(
     proxy_digest = dna["source_digest"]
     session = {
         "session_version": SESSION_VERSION,
+        "session_id": str(uuid.uuid4()),
+        "revision": 0,
         "target": {
             "photo_id": photo_id,
             "filename": filename or path.name,
             "source_digest": source_digest_override or proxy_digest,
             "proxy_digest": proxy_digest,
             "baseline_edit_digest": baseline_edit_digest,
+            "proxy_path": str(path.resolve()),
+            "baseline_kind": "lightroom_current_render" if photo_id and baseline_edit_digest and source_digest_override else "file_only",
+            "live_applicable": bool(photo_id and baseline_edit_digest and source_digest_override),
         },
         "photo_dna": dna,
         "candidates": build_candidates(dna),
@@ -827,6 +928,9 @@ def _apply_op(rgb: np.ndarray, op: Mapping[str, Any], multiplier: float, seed: i
         amount = float(op["amount"]) * multiplier
         adjustment = np.array([amount, amount * 0.18, -amount], dtype=np.float32)
         return np.clip(rgb + adjustment, 0.0, 1.0)
+    if name == "exposure":
+        amount = float(op["amount"]) * multiplier
+        return np.clip(rgb * (2.0**amount), 0.0, 1.0)
     if name == "local_texture":
         amount = float(op["amount"]) * multiplier
         blurred = cv2.GaussianBlur(rgb, (0, 0), 1.4)
@@ -943,6 +1047,8 @@ def _preview_qc(
     safe_base = np.nan_to_num(baseline, nan=0.0, posinf=1.0, neginf=0.0)
     baseline_gray = cv2.cvtColor(np.clip(safe_base * 255, 0, 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
     output_gray = cv2.cvtColor(np.clip(safe_output * 255, 0, 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    baseline_luma = baseline_gray.astype(np.float32) / 255.0
+    output_luma = output_gray.astype(np.float32) / 255.0
     base_low = float(np.mean(safe_base <= (1.0 / 255.0)))
     base_high = float(np.mean(safe_base >= (254.0 / 255.0)))
     out_low = float(np.mean(safe_output <= (1.0 / 255.0)))
@@ -975,6 +1081,12 @@ def _preview_qc(
         "luma_levels_8bit": {"baseline": base_levels, "output": out_levels},
         "possible_banding": possible_banding,
         "mean_absolute_change": round(float(np.mean(diff)), 6),
+        "intent": {
+            "baseline_luma_p10": round(float(np.percentile(baseline_luma, 10)), 6),
+            "output_luma_p10": round(float(np.percentile(output_luma, 10)), 6),
+            "baseline_luma_mean": round(float(np.mean(baseline_luma)), 6),
+            "output_luma_mean": round(float(np.mean(output_luma)), 6),
+        },
         "people_mean_change": None if people_difference is None else round(people_difference, 6),
         "environment_mean_change": None if environment_difference is None else round(environment_difference, 6),
         "people_mask_coverage": None if people_mask_coverage is None else round(people_mask_coverage, 6),
@@ -1002,6 +1114,17 @@ def _preview_qc(
         risks.append(_risk("unexpected", "preview_people_protection_failure", "Protected person region changed more than the safety threshold."))
     if photo_dna["protected_people"].get("enabled") and (people_mask_coverage is None or people_mask_coverage < 0.001):
         risks.append(_risk("unexpected", "preview_people_mask_empty", "A person is declared but the preview protection mask has no usable coverage; supply person boxes."))
+    creative_intent = candidate.get("operator_graph", {}).get("creative_intent", {})
+    break_operator = creative_intent.get("break_operator")
+    baseline_p10 = float(np.percentile(baseline_luma, 10))
+    output_p10 = float(np.percentile(output_luma, 10))
+    baseline_mean = float(np.mean(baseline_luma))
+    output_mean = float(np.mean(output_luma))
+    if candidate.get("candidate_id") == "break" and break_operator == "low_key_cross_process":
+        if output_p10 >= baseline_p10 - 0.012 or output_mean >= baseline_mean + 0.03:
+            risks.append(_risk("unexpected", "preview_intent_mismatch", "Low-key Break did not deepen shadows and preserve a darker tonal direction."))
+    elif int(creative_intent.get("tone_direction", 0)) > 0 and output_mean <= baseline_mean:
+        risks.append(_risk("unexpected", "preview_intent_mismatch", "The authored luminous direction did not increase mean luminance."))
     return metrics, risks
 
 
@@ -1048,7 +1171,9 @@ def _render_one(
                     strength,
                     cache_key,
                     True,
+                    creative_hash,
                     preview_hash,
+                    source_digest(cached_path),
                     metadata["qc"],
                     metadata["detected_risks"],
                 )
@@ -1062,22 +1187,46 @@ def _render_one(
     temporary_metadata = metadata_path.with_suffix(metadata_path.suffix + ".tmp")
     temporary_metadata.write_text(json.dumps(metadata, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
     temporary_metadata.replace(metadata_path)
-    return PreviewResult(candidate["candidate_id"], str(cached_path), strength, cache_key, False, preview_hash, qc, detected)
+    return PreviewResult(
+        candidate["candidate_id"],
+        str(cached_path),
+        strength,
+        cache_key,
+        False,
+        creative_hash,
+        preview_hash,
+        source_digest(cached_path),
+        qc,
+        detected,
+    )
 
 
-def _make_contact_sheet(results: Sequence[PreviewResult], output_path: Path) -> None:
-    opened = [Image.open(result.path).convert("RGB") for result in results]
+def _make_contact_sheet_with_baseline(
+    baseline_path: str | Path,
+    results: Sequence[PreviewResult],
+    output_path: Path,
+) -> None:
+    baseline_source = Image.open(baseline_path)
+    opened = [ImageOps.exif_transpose(baseline_source).convert("RGB")] + [
+        Image.open(result.path).convert("RGB") for result in results
+    ]
+    baseline_source.close()
     try:
         target_height = min(720, max(image.height for image in opened))
         cards: list[Image.Image] = []
         label_height = 58
-        for result, image in zip(results, opened):
+        card_specs = [("BASELINE", None, opened[0])] + [
+            (result.candidate_id.upper(), result.strength, image)
+            for result, image in zip(results, opened[1:])
+        ]
+        for label, strength, image in card_specs:
             scale = target_height / image.height
             resized = image.resize((max(1, round(image.width * scale)), target_height), Image.Resampling.LANCZOS)
             card = Image.new("RGB", (resized.width, target_height + label_height), "#111111")
             card.paste(resized, (0, label_height))
             draw = ImageDraw.Draw(card)
-            draw.text((18, 17), f"{result.candidate_id.upper()}  {result.strength:.0f}%", fill="white", font=ImageFont.load_default())
+            caption = label if strength is None else f"{label}  {strength:.0f}%"
+            draw.text((18, 17), caption, fill="white", font=ImageFont.load_default())
             cards.append(card)
         gap = 8
         sheet = Image.new("RGB", (sum(card.width for card in cards) + gap * (len(cards) - 1), target_height + label_height), "#222222")
@@ -1123,7 +1272,7 @@ def render_session(
     validate_session(session, image_path=image_path)
     if long_edge < 256:
         raise ValueError("long_edge must be at least 256 pixels")
-    output = Path(output_dir)
+    output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     cache_dir = output / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1156,7 +1305,7 @@ def render_session(
         results = [future.result() for future in futures]
     results.sort(key=lambda result: ("native", "amplify", "break").index(result.candidate_id))
     contact_sheet = output / f"{Path(image_path).stem}-creative-contact-sheet.jpg"
-    _make_contact_sheet(results, contact_sheet)
+    _make_contact_sheet_with_baseline(image_path, results, contact_sheet)
     for candidate, result in zip(session["candidates"], results):
         candidate["risks"] = [risk for risk in candidate["risks"] if risk.get("source") != "preview_qc"]
         for risk in result.detected_risks:
@@ -1167,7 +1316,9 @@ def render_session(
             "strength": result.strength,
             "cache_key": result.cache_key,
             "cache_hit": result.cache_hit,
-            "recipe_hash": result.preview_recipe_hash,
+            "recipe_hash": result.recipe_hash,
+            "preview_render_hash": result.preview_render_hash,
+            "artifact_digest": result.artifact_digest,
             "renderer_version": PREVIEW_RENDERER_VERSION,
             "qc": result.qc,
             "detected_risks": result.detected_risks,
@@ -1190,6 +1341,24 @@ def select_candidate(session: dict[str, Any], candidate_id: str, strength: float
     requested = float(candidate["intensity"]["default"] if strength is None else strength)
     if not 0.0 <= requested <= 200.0:
         raise ValueError("strength must be between 0 and 200")
+    preview = session.get("previews", {}).get(candidate_id)
+    if not isinstance(preview, Mapping):
+        raise SessionValidationError(f"selection requires a rendered preview for {candidate_id}")
+    if not math.isclose(float(preview.get("strength", -1)), requested, abs_tol=1e-8):
+        raise SessionValidationError(
+            f"selection strength {requested:g}% was not previewed; render {candidate_id} at that exact strength first"
+        )
+    expected_hash = recipe_hash(candidate, requested)
+    if preview.get("recipe_hash") != expected_hash:
+        raise SessionValidationError("selection preview recipe_hash differs from the candidate and requested strength")
+    preview_path = preview.get("path")
+    if not isinstance(preview_path, str) or not Path(preview_path).is_file():
+        raise SessionValidationError("selection preview artifact is missing")
+    if preview.get("artifact_digest") != source_digest(preview_path):
+        raise SessionValidationError("selection preview artifact_digest differs from preview bytes")
+    preview_risks = preview.get("detected_risks", [])
+    if any(risk.get("kind") == "unexpected" for risk in preview_risks if isinstance(risk, Mapping)):
+        raise SessionValidationError("selection is blocked by an unexpected preview risk")
     if any(risk.get("kind") == "unexpected" for risk in candidate.get("risks", [])):
         raise SessionValidationError("selection is blocked by an unexpected risk")
     session["selection"] = {"candidate_id": candidate_id, "requested_strength": requested}
@@ -1241,6 +1410,10 @@ def validate_session(session: Mapping[str, Any], image_path: str | Path | None =
         raise SessionValidationError(f"GradeSession missing fields: {sorted(missing)}")
     if session["session_version"] != SESSION_VERSION:
         raise SessionValidationError(f"unsupported session_version: {session['session_version']}")
+    if "session_id" in session and (not isinstance(session["session_id"], str) or not session["session_id"].strip()):
+        raise SessionValidationError("session_id must be a non-empty string")
+    if "revision" in session and (not isinstance(session["revision"], int) or session["revision"] < 0):
+        raise SessionValidationError("revision must be a non-negative integer")
     target = session["target"]
     for field in ("filename", "source_digest", "proxy_digest", "baseline_edit_digest", "photo_id"):
         if field not in target:
@@ -1300,6 +1473,10 @@ def validate_session(session: Mapping[str, Any], image_path: str | Path | None =
     if execution["state"] in {"ACQUIRE", "ANALYZED", "PREVIEWED"} and session["selection"] is not None:
         raise SessionValidationError("selection must remain null until SELECTED")
     if session["selection"]:
+        if not isinstance(session.get("session_id"), str) or not session["session_id"].strip():
+            raise SessionValidationError("selected live workflow requires session_id; run migrate for a legacy session")
+        if not isinstance(session.get("revision"), int) or session["revision"] < 0:
+            raise SessionValidationError("selected live workflow requires a non-negative revision")
         selection = session["selection"]
         matches = [candidate for candidate in candidates if candidate["candidate_id"] == selection.get("candidate_id")]
         if not matches:
@@ -1320,6 +1497,24 @@ def validate_session(session: Mapping[str, Any], image_path: str | Path | None =
             raise SessionValidationError("execution.desired parameter_specs differ from the selected candidate")
         if desired.get("recipe_hash") != recipe_hash(selected, requested):
             raise SessionValidationError("execution.desired recipe_hash does not match the selected candidate")
+        preview = session.get("previews", {}).get(selection["candidate_id"])
+        if not isinstance(preview, Mapping):
+            raise SessionValidationError("selected candidate requires a preview manifest entry")
+        if not math.isclose(float(preview.get("strength", -1)), requested, abs_tol=1e-8):
+            raise SessionValidationError("selected strength differs from the reviewed preview strength")
+        if preview.get("recipe_hash") != desired.get("recipe_hash"):
+            raise SessionValidationError("selected preview recipe_hash differs from execution.desired")
+        preview_path = preview.get("path")
+        if not isinstance(preview_path, str) or not Path(preview_path).is_file():
+            raise SessionValidationError("selected preview artifact is missing")
+        if preview.get("artifact_digest") != source_digest(preview_path):
+            raise SessionValidationError("selected preview artifact_digest differs from preview bytes")
+        if any(
+            risk.get("kind") == "unexpected"
+            for risk in preview.get("detected_risks", [])
+            if isinstance(risk, Mapping)
+        ):
+            raise SessionValidationError("selected preview contains an unexpected risk")
     protection = execution["person_protection"]
     required_people = bool(session["photo_dna"]["protected_people"].get("enabled"))
     if bool(protection.get("required")) != required_people:
@@ -1330,6 +1525,8 @@ def validate_session(session: Mapping[str, Any], image_path: str | Path | None =
             raise SessionValidationError("person image requires a completed protection result")
         if not required_people and result != "not_required":
             raise SessionValidationError("no-person image must record person protection result not_required")
+        if target.get("live_applicable") and not protection.get("post_edit_digest"):
+            raise SessionValidationError("live person-protection audit requires post_edit_digest")
     if execution["state"] in {"VERIFIED", "DONE"} and not execution["readback"]:
         raise SessionValidationError("VERIFIED or DONE requires Lightroom readback")
     return warnings
@@ -1386,8 +1583,82 @@ def load_session(path: str | Path) -> dict[str, Any]:
     return session
 
 
-def save_session(session: Mapping[str, Any], path: str | Path) -> None:
+def save_session(
+    session: Mapping[str, Any],
+    path: str | Path,
+    *,
+    expected_revision: int | None = None,
+) -> None:
     validate_session(session)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8")
+    existing_revision: int | None = None
+    if destination.exists():
+        existing = json.loads(destination.read_text(encoding="utf-8"))
+        existing_revision = int(existing.get("revision", 0))
+        if expected_revision is not None and existing_revision != expected_revision:
+            raise SessionValidationError(
+                f"stale GradeSession revision: expected {expected_revision}, found {existing_revision}"
+            )
+    elif expected_revision not in {None, -1}:
+        raise SessionValidationError("GradeSession does not yet exist for the requested revision")
+    payload = dict(session)
+    payload["revision"] = (existing_revision if existing_revision is not None else -1) + 1
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    if destination.exists():
+        shutil.copy2(destination, destination.with_suffix(destination.suffix + ".bak"))
+    os.replace(temporary, destination)
+    if isinstance(session, dict):
+        session["revision"] = payload["revision"]
+
+
+def migrate_preview_contract(session: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade preview manifests and revoke any selection that was never reviewed exactly."""
+    changes: list[str] = []
+    candidates = {candidate["candidate_id"]: candidate for candidate in session.get("candidates", [])}
+    for candidate_id, preview in session.get("previews", {}).items():
+        if candidate_id not in candidates or not isinstance(preview, dict):
+            continue
+        strength = float(preview["strength"])
+        canonical_hash = recipe_hash(candidates[candidate_id], strength)
+        if preview.get("recipe_hash") != canonical_hash:
+            preview["preview_render_hash"] = preview.get("recipe_hash")
+            preview["recipe_hash"] = canonical_hash
+            changes.append(f"normalized {candidate_id} recipe_hash")
+        path = preview.get("path")
+        if isinstance(path, str) and Path(path).is_file():
+            digest = source_digest(path)
+            if preview.get("artifact_digest") != digest:
+                preview["artifact_digest"] = digest
+                changes.append(f"recorded {candidate_id} artifact_digest")
+    selection = session.get("selection")
+    if selection:
+        preview = session.get("previews", {}).get(selection.get("candidate_id"), {})
+        requested = float(selection.get("requested_strength", -1))
+        exact = (
+            isinstance(preview, Mapping)
+            and math.isclose(float(preview.get("strength", -2)), requested, abs_tol=1e-8)
+            and preview.get("recipe_hash") == session.get("execution", {}).get("desired", {}).get("recipe_hash")
+        )
+        if not exact:
+            session["selection"] = None
+            session["execution"]["desired"] = {}
+            session["execution"]["state"] = "PREVIEWED"
+            history = session["execution"].get("state_history", [])
+            session["execution"]["state_history"] = history[: history.index("PREVIEWED") + 1]
+            changes.append("revoked unreviewed selection and returned to PREVIEWED")
+    session.setdefault("target", {}).setdefault(
+        "live_applicable",
+        bool(session["target"].get("photo_id") and session["target"].get("baseline_edit_digest")),
+    )
+    if not session.get("session_id"):
+        session["session_id"] = str(uuid.uuid4())
+        changes.append("assigned session_id")
+    session.setdefault("revision", 0)
+    validate_session(session)
+    return {"changes": changes, "state": session["execution"]["state"]}

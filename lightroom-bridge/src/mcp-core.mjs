@@ -35,6 +35,7 @@ export const TOOL_DEFINITIONS = [
       type: "object",
       properties: {
         target: { type: "object" },
+        expected_current_edit_digest: { type: "string" },
         parameters: { type: "array", items: { type: "string" }, uniqueItems: true },
       },
       additionalProperties: false,
@@ -59,6 +60,7 @@ export const TOOL_DEFINITIONS = [
         transaction_id: { type: "string" },
         execution: { type: "object" },
         target: { type: "object" },
+        expected_current_edit_digest: { type: "string" },
       },
       additionalProperties: false,
     },

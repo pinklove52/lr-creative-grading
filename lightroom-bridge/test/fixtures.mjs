@@ -4,6 +4,7 @@ export const TARGET = Object.freeze({
   source_digest: "source-identity-sha256",
   baseline_edit_digest: "edit-0",
   proxy_digest: "proxy-bytes-sha256",
+  live_applicable: true,
 });
 
 export const PARAMETER_SPECS = Object.freeze({
@@ -58,6 +59,8 @@ export function makeGradeSession(overrides = {}) {
   };
   return {
     session_version: overrides.session_version ?? "1.0.0",
+    session_id: overrides.session_id ?? "session-fixture-1",
+    revision: overrides.revision ?? 3,
     target: { ...TARGET, ...(overrides.target ?? {}) },
     photo_dna: { source_digest: TARGET.proxy_digest },
     candidates: [candidate],
@@ -79,7 +82,15 @@ export function makeGradeSession(overrides = {}) {
       },
       applied: {}, readback: {}, failures: [],
     },
-    previews: {},
+    previews: {
+      [candidateId]: {
+        path: `previews/${candidateId}.jpg`,
+        strength,
+        recipe_hash: recipeHash,
+        artifact_digest: "a".repeat(64),
+        detected_risks: [],
+      },
+    },
     collection: { saved: false },
   };
 }

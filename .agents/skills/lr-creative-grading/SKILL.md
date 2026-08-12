@@ -1,6 +1,6 @@
 ---
 name: lr-creative-grading
-description: Orchestrate photo-native creative Lightroom grading from one PhotoDNA analysis through Native, Amplify, and Break previews, one user choice, transactional application, person protection, readback, and rollback. Use when the user wants a photo-specific look, bold or extreme color reconstruction, faster Lightroom grading, a three-way preview, or an end-to-end reversible creative grade without contest rules or automatic normalization.
+description: Orchestrate photo-native creative Lightroom grading from one PhotoDNA analysis through Native, Amplify, and Break previews, one user choice, transactional application, person protection, readback, and rollback. Use when the user wants a photo-specific look, bold or extreme color reconstruction, a three-way preview, or an end-to-end reversible creative grade without contest rules or automatic normalization.
 ---
 
 # Lightroom 内生创意调色
@@ -13,9 +13,13 @@ Read references/session-schema.md for every run. Read references/creative-operat
 
 Use scripts/creative_grade.py as the single CLI entry:
 
+- doctor: verify the bundled bridge and, with --live, the running Lightroom plug-in;
+- acquire-live: pin target identity and copy the current-render proxy into a new session workspace;
 - analyze: create PhotoDNA once, merge model semantics through --semantic-hints, and advance ACQUIRE to ANALYZED;
 - render: compile and cache Native, Amplify, and Break previews, then advance to PREVIEWED;
 - select: record the one user decision and requested 0–200% strength;
+- apply, protect/protect-not-required, verify, done, and rollback: own every live state transition and merge; never hand-edit GradeSession JSON;
+- migrate: normalize legacy preview hashes/digests and revoke an old selection when its exact strength was never previewed;
 - validate: check the shared GradeSession at every handoff;
 - collect: save to the inspiration library only when the user explicitly says “收藏” or makes an equally direct save-to-library request.
 
@@ -23,19 +27,19 @@ The processing core is scripts/creative_engine.py. Never replace it with a per-p
 
 ## Run one coordinated workflow
 
-1. Acquire the exact target once. Prefer the bridge proxy of the current Lightroom render; that visible proxy is the baseline. Otherwise use the supplied local image. Record stable source_digest, original Lightroom filename, analyzed JPEG proxy_digest, and baseline_edit_digest before analysis. Pass the stable identity with analyze --source-digest and the original filename with --filename when the proxy is temporary.
+1. Resolve creative_grade.py from this SKILL.md directory, not from the process working directory. Run doctor --live and acquire-live for live Lightroom work, then pass its acquire.json through analyze --acquire-manifest. Treat the copied source/baseline.jpg as immutable. Otherwise use the supplied local image and keep the session file-only. Never bind a file-only session to the current Lightroom photo later.
 2. Before analyze, write compact JSON semantic hints for subject, scene, mood, lighting, and materials from the model and task context, and pass them through analyze --semantic-hints. Pass model/context person judgment separately through --protected-people or --people-boxes so it is written into photo_dna.protected_people. Build one PhotoDNA covering semantics, tone, color, texture, natural harmony, visual anchors, and protected people. OpenCV face detection is never the sole authority. Separate visible evidence from inference. Do not restart analysis at later stages.
-3. Generate exactly three complete candidates in parallel:
+3. Compile semantic hints into the persisted creative_intent and operator_graph, then generate exactly three complete candidates in parallel:
    - Native organizes and extends the image's existing language.
    - Amplify strengthens its most distinctive relationship.
    - Break reconstructs the image with a structurally justified extreme operator.
 4. Give every candidate its own design strength, offline_ops, lr_recipe, preview fidelity, risks, and person-protection intent. Break must not be merely a stronger Amplify.
-5. Render equal-size, long-edge 1800 px previews and one contact sheet. Reuse the proxy_digest plus recipe_hash cache. Label the result as an offline approximation when Adobe did not render it.
-6. Present all three candidates together and ask for one choice, a named mix, or a 0–200% strength. Before that response, stop at PREVIEWED and do not touch Lightroom. After it, record SELECTED without asking for repeated panel-by-panel approval.
+5. Render equal-size, long-edge 1800 px previews and a contact sheet containing Baseline, Native, Amplify, and Break. Persist the canonical recipe_hash, renderer hash, and preview artifact digest separately. Label the result as an offline approximation when Adobe did not render it.
+6. Present all three candidates together and ask for one choice or an exact 0–200% strength. Before that response, stop at PREVIEWED and do not touch Lightroom. Selection is valid only when that exact candidate/strength/hash/artifact was rendered and passed preview QC. If strength changes, rerender before selecting.
 7. Validate target identity, baseline digest, module, capabilities, ranges, and risks. Refuse unknown, out-of-range, or unsupported parameters; never silently clamp or skip them.
-8. Create a snapshot and apply the preset seed plus complete dynamic recipe in one transaction. Consume its embedded immediate value check, but keep the shared session at APPLIED.
+8. Run the apply command so it creates a snapshot, applies the complete dynamic recipe in one transaction, validates and merges execution_patch, and atomically persists the incremented session revision. Do not use an ad hoc bridge_call script or edit state_history directly.
 9. Protect every detected or declared person. First constrain the compiled global recipe; if that cannot preserve credible skin gradients, face depth, and texture, perform one inverse person-mask compensation through lr-color-grading. Record PERSON_PROTECTED, or record not_required when PhotoDNA establishes that no person is present.
-10. After PERSON_PROTECTED, call the public readback once, merge its execution_patch, and inspect the rendered result with at most two default visual checks. Intentional artifacts may remain; unexpected artifacts must be corrected or rolled back. Finish at VERIFIED and DONE.
+10. After PERSON_PROTECTED, run verify once, inspect the rendered result with at most two default visual checks, then run done. Intentional artifacts may remain; unexpected artifacts must be corrected or rolled back through the rollback command.
 
 ## Respect creative risk
 

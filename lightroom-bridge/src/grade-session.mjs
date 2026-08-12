@@ -207,6 +207,33 @@ function hasUnexpectedRisk(candidate) {
   return false;
 }
 
+function validateReviewedPreview(session, candidateId, strength, desiredRecipeHash) {
+  const previews = assertObject(session.previews, "previews");
+  const preview = assertObject(previews[candidateId], `previews.${candidateId}`);
+  if (typeof preview.strength !== "number" || Math.abs(preview.strength - strength) > 1e-12) {
+    throw new ContractError(
+      "UNREVIEWED_STRENGTH",
+      `Selected strength ${strength}% differs from the reviewed ${String(preview.strength)}% preview`,
+    );
+  }
+  if (preview.recipe_hash !== desiredRecipeHash) {
+    throw new ContractError(
+      "UNREVIEWED_RECIPE",
+      "Selected preview recipe_hash differs from execution.desired.recipe_hash",
+    );
+  }
+  if (typeof preview.path !== "string" || preview.path.trim() === "") {
+    throw new ContractError("INVALID_REQUEST", "Selected preview path must be a non-empty string");
+  }
+  assertNonEmptyString(preview.artifact_digest, `previews.${candidateId}.artifact_digest`);
+  if (!/^[a-f0-9]{64}$/i.test(preview.artifact_digest)) {
+    throw new ContractError("INVALID_REQUEST", `previews.${candidateId}.artifact_digest must be a SHA-256 digest`);
+  }
+  if (Array.isArray(preview.detected_risks) && preview.detected_risks.some(riskIsUnexpected)) {
+    throw new ContractError("UNEXPECTED_RISK", "Selected preview contains an unexpected risk");
+  }
+}
+
 function historyTailState(session) {
   const history =
     session.execution?.state_history ??
@@ -243,6 +270,15 @@ function validateSelectedSession(session, candidate, selection, candidateId, nor
     );
   }
   const execution = assertObject(session.execution, "execution");
+  if (typeof session.session_id !== "string" || session.session_id.trim() === "") {
+    throw new ContractError("INVALID_REQUEST", "GradeSession session_id must be a non-empty string");
+  }
+  if (!Number.isInteger(session.revision) || session.revision < 0) {
+    throw new ContractError("INVALID_REQUEST", "GradeSession revision must be a non-negative integer");
+  }
+  if (session.target?.live_applicable !== true) {
+    throw new ContractError("FILE_ONLY_SESSION", "File-only GradeSession cannot be applied to Lightroom");
+  }
   if (execution.state !== "SELECTED") {
     throw new ContractError(
       "INVALID_SESSION_STATE",
@@ -306,6 +342,7 @@ function validateSelectedSession(session, candidate, selection, candidateId, nor
     );
   }
   assertNonEmptyString(desired.recipe_hash, "execution.desired.recipe_hash");
+  validateReviewedPreview(session, candidateId, strength, desired.recipe_hash);
   // recipe_hash is strength-specific and therefore belongs to execution.desired,
   // not the PREVIEWED candidate. Candidate/strength/spec consistency is checked
   // structurally above; the preview engine owns the canonical hash algorithm.

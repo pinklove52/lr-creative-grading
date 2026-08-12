@@ -40,6 +40,29 @@ test("rejects unexpected risk and stale execution.desired", () => {
   assert.throws(() => compileApplyTransaction(staleSpecs), /parameter_specs differs/);
 });
 
+test("requires the exact reviewed preview strength and recipe hash", () => {
+  const changedStrength = makeGradeSession();
+  changedStrength.previews[changedStrength.selection.candidate_id].strength = 82;
+  assert.throws(() => compileApplyTransaction(changedStrength), /reviewed/);
+
+  const changedHash = makeGradeSession();
+  changedHash.previews[changedHash.selection.candidate_id].recipe_hash = "different-preview-hash";
+  assert.throws(() => compileApplyTransaction(changedHash), /recipe_hash/);
+
+  const risky = makeGradeSession();
+  risky.previews[risky.selection.candidate_id].detected_risks.push({
+    kind: "unexpected", code: "intent_mismatch",
+  });
+  assert.throws(() => compileApplyTransaction(risky), /unexpected risk/);
+
+  const invalidDigest = makeGradeSession();
+  invalidDigest.previews[invalidDigest.selection.candidate_id].artifact_digest = "not-a-sha256";
+  assert.throws(() => compileApplyTransaction(invalidDigest), /SHA-256/);
+
+  const fileOnly = makeGradeSession({ target: { live_applicable: false } });
+  assert.throws(() => compileApplyTransaction(fileOnly), /File-only/);
+});
+
 test("requires explicit parameter operations; bare numbers need legacy delta opt-in", () => {
   const direct = {
     target: TARGET,

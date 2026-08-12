@@ -11,23 +11,19 @@ Use the lr-creative-grading contract and stop after PREVIEWED. This skill does n
 
 Read ../lr-creative-grading/references/session-schema.md, ../lr-creative-grading/references/creative-operators.md, and ../lr-creative-grading/references/risk-qc.md.
 
-Use the shared CLI:
-
-    python ../lr-creative-grading/scripts/creative_grade.py analyze ...
-    python ../lr-creative-grading/scripts/creative_grade.py render ...
-    python ../lr-creative-grading/scripts/creative_grade.py validate ...
+Resolve ../lr-creative-grading/scripts/creative_grade.py from this SKILL.md directory and pass the resulting absolute path to Python. Do not assume the process working directory is a skill folder.
 
 Do not use a per-photo hard-coded renderer.
 
 ## Preview-only flow
 
-1. Bind the supplied image or request the current rendered JPEG proxy through the read-only bridge.
+1. Run doctor --live and acquire-live for a Lightroom target, or bind the supplied image as file-only. Preserve the acquired source/baseline.jpg.
 2. Pin stable source_digest, original Lightroom filename, analyzed proxy_digest, and baseline_edit_digest. Pass the original filename to analyze --filename when the visible proxy is temporary. The currently visible Lightroom result is the baseline; do not normalize it.
 3. Pass model/context hints for subject, scene, mood, lighting, and materials with analyze --semantic-hints. Pass person presence and regions through --protected-people or --people-boxes. Run analysis once so PhotoDNA combines semantic and deterministic image evidence.
 4. Run render to create the Native, Amplify, and Break candidates in parallel at their own design strengths.
-5. Reuse the proxy_digest plus recipe_hash cache and generate equal-frame, long-edge 1800 px previews plus one contact sheet.
+5. Reuse the proxy_digest plus recipe/render hashes and generate equal-frame, long-edge 1800 px previews plus a Baseline/Native/Amplify/Break contact sheet.
 6. Validate the GradeSession and verify labels, hashes, histograms, people, gradients, and declared artifacts.
-7. Present the three candidates together and ask the user for the workflow's single choice, named mix, or 0–200% strength.
+7. Present the three candidates together and ask for one exact candidate/strength. A changed strength must be rerendered and QC-checked; never select an unreviewed recipe hash.
 8. Stop at PREVIEWED. The lr-creative-grading orchestrator records selection and owns every later transition.
 
 Rendering derivatives in the workspace does not require a second preview-authorization question. It grants no permission to write Lightroom settings.
