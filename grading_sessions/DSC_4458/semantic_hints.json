@@ -1,0 +1,31 @@
+{
+  "subject": "Blue hydrangea flower clusters emerging from dense glossy green foliage",
+  "scene": "A lush garden bed photographed close-up, with layered leaves and scattered blossoms",
+  "mood": "Quiet, cool, humid, contemplative, and slightly mysterious",
+  "lighting": "Soft subdued daylight with localized specular highlights on wet or waxy leaves; flowers are luminous against deep foliage",
+  "materials": [
+    "delicate hydrangea petals",
+    "wet or waxy broad leaves",
+    "dense organic foliage"
+  ],
+  "confidence": 0.96,
+  "preserve": [
+    "credible powder-blue hydrangea color",
+    "soft petal detail",
+    "wet leaf sheen",
+    "deep layered greens",
+    "the existing low-key exposure tendency"
+  ],
+  "amplify": [
+    "blue-green color separation",
+    "luminous flowers against dark foliage",
+    "humid botanical atmosphere",
+    "leaf texture without harsh halos"
+  ],
+  "break": [
+    "low-key cross process",
+    "ink-dark shadow swallowing outside the flower anchors",
+    "cyan-blue floral highlights",
+    "a nocturnal botanical plate atmosphere"
+  ]
+}

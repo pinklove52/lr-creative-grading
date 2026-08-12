@@ -1,0 +1,113 @@
+{
+  "source": "C:\\Users\\lh\\Desktop\\地\\DSC_2667.JPG",
+  "dimensions": [
+    3712,
+    5568
+  ],
+  "images": {
+    "BASELINE": {
+      "R": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.0,
+        "full_pct": 0.0
+      },
+      "G": {
+        "min": 5,
+        "max": 255,
+        "zero_pct": 0.0,
+        "full_pct": 0.4407
+      },
+      "B": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.0306,
+        "full_pct": 0.4546
+      },
+      "L": {
+        "min": 5,
+        "max": 254,
+        "zero_pct": 0.0,
+        "full_pct": 0.0
+      }
+    },
+    "A": {
+      "R": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.5653,
+        "full_pct": 0.0009
+      },
+      "G": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.005,
+        "full_pct": 0.0191
+      },
+      "B": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.012,
+        "full_pct": 0.0159
+      },
+      "L": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.0024,
+        "full_pct": 0.0011
+      }
+    },
+    "B": {
+      "R": {
+        "min": 11,
+        "max": 241,
+        "zero_pct": 0.0,
+        "full_pct": 0.0
+      },
+      "G": {
+        "min": 31,
+        "max": 232,
+        "zero_pct": 0.0,
+        "full_pct": 0.0
+      },
+      "B": {
+        "min": 4,
+        "max": 229,
+        "zero_pct": 0.0,
+        "full_pct": 0.0
+      },
+      "L": {
+        "min": 30,
+        "max": 232,
+        "zero_pct": 0.0,
+        "full_pct": 0.0
+      }
+    },
+    "C": {
+      "R": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 2.2952,
+        "full_pct": 0.0321
+      },
+      "G": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.1757,
+        "full_pct": 0.1365
+      },
+      "B": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.0699,
+        "full_pct": 0.1879
+      },
+      "L": {
+        "min": 0,
+        "max": 255,
+        "zero_pct": 0.0913,
+        "full_pct": 0.0362
+      }
+    }
+  }
+}

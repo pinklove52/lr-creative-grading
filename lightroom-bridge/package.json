@@ -1,0 +1,14 @@
+{
+  "name": "lr-creative-grading-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-dependency MCP transport for the Lightroom Creative Grading Bridge",
+  "scripts": {
+    "start": "node src/mcp-server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

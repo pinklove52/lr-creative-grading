@@ -1,0 +1,41 @@
+{
+  "cache_contract": "1.0.0",
+  "detected_risks": [],
+  "jpeg_size": 673357,
+  "preview_recipe_hash": "c596cf08115b122d509787a9aa51ceacecb2f1031688d178ed27633b01eb56c6",
+  "qc": {
+    "clip_fraction": {
+      "baseline_high": 0.000218,
+      "baseline_low": 0.182736,
+      "output_high": 0.001151,
+      "output_low": 0.284315
+    },
+    "dimensions": {
+      "baseline": [
+        1200,
+        1800
+      ],
+      "output": [
+        1200,
+        1800
+      ]
+    },
+    "environment_mean_change": null,
+    "finite_fraction": 1.0,
+    "luma_levels_8bit": {
+      "baseline": 243,
+      "output": 248
+    },
+    "mean_absolute_change": 0.050078,
+    "people_mask_coverage": null,
+    "people_mean_change": null,
+    "possible_banding": false
+  },
+  "render_dimensions": [
+    1200,
+    1800
+  ],
+  "renderer_version": "offline-oklab-1.0.0",
+  "requested_long_edge": 1800,
+  "source_digest": "a553f27c457a262e874bc8754ef2c97905d4a542322d1d33ebbb4b6563cba90f"
+}

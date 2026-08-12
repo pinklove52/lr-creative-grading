@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lightroom 调色预览"
+  short_description: "只生成 Native、Amplify、Break 三案离线同框预览并保留共享会话"
+  default_prompt: "使用 $lr-color-preview 从当前可见基准生成 Native、Amplify、Break 三案离线预览，保留 GradeSession，并在写入 Lightroom 前停止。"

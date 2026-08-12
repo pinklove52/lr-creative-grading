@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lightroom 高速事务调色"
+  short_description: "消费已选方案，用一次桥接事务和一次回读高速应用 Lightroom 全局参数"
+  default_prompt: "使用 $lr-color-grading-flash1 消费已处于 SELECTED 的 GradeSession，不重新分析或推荐；校验目标后一次事务写入并回读。"

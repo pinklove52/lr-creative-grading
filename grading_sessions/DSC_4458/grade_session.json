@@ -1,0 +1,1155 @@
+{
+  "session_version": "1.0.0",
+  "target": {
+    "photo_id": null,
+    "filename": "DSC_4458.JPG",
+    "source_digest": "a553f27c457a262e874bc8754ef2c97905d4a542322d1d33ebbb4b6563cba90f",
+    "proxy_digest": "a553f27c457a262e874bc8754ef2c97905d4a542322d1d33ebbb4b6563cba90f",
+    "baseline_edit_digest": null
+  },
+  "photo_dna": {
+    "analysis_version": "photodna-1.0.0",
+    "source_digest": "a553f27c457a262e874bc8754ef2c97905d4a542322d1d33ebbb4b6563cba90f",
+    "semantics": {
+      "subject_model": "visual_anchor_proxy",
+      "subject_regions": [
+        {
+          "x": 0.6245,
+          "y": 0.625,
+          "score": 0.20743,
+          "role": "luminance"
+        },
+        {
+          "x": 0.3741,
+          "y": 0.625,
+          "score": 0.20404,
+          "role": "luminance"
+        },
+        {
+          "x": 0.1245,
+          "y": 0.625,
+          "score": 0.18909,
+          "role": "luminance"
+        },
+        {
+          "x": 0.3741,
+          "y": 0.375,
+          "score": 0.18139,
+          "role": "luminance"
+        },
+        {
+          "x": 0.1245,
+          "y": 0.375,
+          "score": 0.18114,
+          "role": "luminance"
+        }
+      ],
+      "subject": "Blue hydrangea flower clusters emerging from dense glossy green foliage",
+      "scene": "A lush garden bed photographed close-up, with layered leaves and scattered blossoms",
+      "mood": "Quiet, cool, humid, contemplative, and slightly mysterious",
+      "lighting": "Soft subdued daylight with localized specular highlights on wet or waxy leaves; flowers are luminous against deep foliage",
+      "materials": [
+        "delicate hydrangea petals",
+        "wet or waxy broad leaves",
+        "dense organic foliage"
+      ],
+      "confidence": 0.96,
+      "creative_guidance": {
+        "preserve": [
+          "credible powder-blue hydrangea color",
+          "soft petal detail",
+          "wet leaf sheen",
+          "deep layered greens",
+          "the existing low-key exposure tendency"
+        ],
+        "amplify": [
+          "blue-green color separation",
+          "luminous flowers against dark foliage",
+          "humid botanical atmosphere",
+          "leaf texture without harsh halos"
+        ],
+        "break": [
+          "low-key cross process",
+          "ink-dark shadow swallowing outside the flower anchors",
+          "cyan-blue floral highlights",
+          "a nocturnal botanical plate atmosphere"
+        ]
+      },
+      "mood_cues": [
+        "low",
+        "moderate",
+        "medium"
+      ],
+      "semantic_hints": {
+        "amplify": [
+          "blue-green color separation",
+          "luminous flowers against dark foliage",
+          "humid botanical atmosphere",
+          "leaf texture without harsh halos"
+        ],
+        "break": [
+          "low-key cross process",
+          "ink-dark shadow swallowing outside the flower anchors",
+          "cyan-blue floral highlights",
+          "a nocturnal botanical plate atmosphere"
+        ],
+        "confidence": 0.96,
+        "lighting": "Soft subdued daylight with localized specular highlights on wet or waxy leaves; flowers are luminous against deep foliage",
+        "materials": [
+          "delicate hydrangea petals",
+          "wet or waxy broad leaves",
+          "dense organic foliage"
+        ],
+        "mood": "Quiet, cool, humid, contemplative, and slightly mysterious",
+        "preserve": [
+          "credible powder-blue hydrangea color",
+          "soft petal detail",
+          "wet leaf sheen",
+          "deep layered greens",
+          "the existing low-key exposure tendency"
+        ],
+        "scene": "A lush garden bed photographed close-up, with layered leaves and scattered blossoms",
+        "subject": "Blue hydrangea flower clusters emerging from dense glossy green foliage"
+      },
+      "limitations": [
+        "No semantic classifier is bundled; people must be supplied explicitly."
+      ]
+    },
+    "tone": {
+      "percentiles": {
+        "p01": 0.11139,
+        "p05": 0.14198,
+        "p25": 0.21732,
+        "p50": 0.28242,
+        "p75": 0.38843,
+        "p95": 0.68578,
+        "p99": 0.83624
+      },
+      "mean": 0.32569,
+      "standard_deviation": 0.16031,
+      "dynamic_range_p05_p95": 0.5438,
+      "shadow_fraction": 0.3705,
+      "highlight_fraction": 0.00706,
+      "key": "low",
+      "contrast": "moderate"
+    },
+    "color": {
+      "dominant_hue": 130,
+      "mean_chroma": 0.063408,
+      "neutral_fraction": 0.006499,
+      "cold_warm_axis": 0.0761,
+      "hue_histogram_360": [
+        9.32e-07,
+        1.041e-06,
+        1.17e-06,
+        1.332e-06,
+        1.528e-06,
+        1.778e-06,
+        2.084e-06,
+        2.45e-06,
+        2.89e-06,
+        3.419e-06,
+        4.064e-06,
+        4.848e-06,
+        5.775e-06,
+        6.865e-06,
+        8.125e-06,
+        9.553e-06,
+        1.1151e-05,
+        1.2896e-05,
+        1.4753e-05,
+        1.6682e-05,
+        1.8629e-05,
+        2.054e-05,
+        2.2349e-05,
+        2.399e-05,
+        2.5402e-05,
+        2.6537e-05,
+        2.7358e-05,
+        2.784e-05,
+        2.7981e-05,
+        2.7801e-05,
+        2.7321e-05,
+        2.659e-05,
+        2.5654e-05,
+        2.4575e-05,
+        2.3406e-05,
+        2.2206e-05,
+        2.1017e-05,
+        1.9873e-05,
+        1.8807e-05,
+        1.7837e-05,
+        1.697e-05,
+        1.6206e-05,
+        1.5538e-05,
+        1.4969e-05,
+        1.4477e-05,
+        1.405e-05,
+        1.3674e-05,
+        1.3353e-05,
+        1.3071e-05,
+        1.2838e-05,
+        1.2658e-05,
+        1.2523e-05,
+        1.2429e-05,
+        1.2375e-05,
+        1.2363e-05,
+        1.2415e-05,
+        1.2512e-05,
+        1.2667e-05,
+        1.2893e-05,
+        1.3183e-05,
+        1.3546e-05,
+        1.3997e-05,
+        1.4541e-05,
+        1.5183e-05,
+        1.5928e-05,
+        1.6786e-05,
+        1.7776e-05,
+        1.8897e-05,
+        2.0168e-05,
+        2.1579e-05,
+        2.3166e-05,
+        2.492e-05,
+        2.684e-05,
+        2.8989e-05,
+        3.1325e-05,
+        3.3914e-05,
+        3.674e-05,
+        3.9868e-05,
+        4.3346e-05,
+        4.7223e-05,
+        5.1606e-05,
+        5.6529e-05,
+        6.218e-05,
+        6.8617e-05,
+        7.6045e-05,
+        8.4691e-05,
+        9.4848e-05,
+        0.000107063,
+        0.000122093,
+        0.000139856,
+        0.000161565,
+        0.000188096,
+        0.000220839,
+        0.000261162,
+        0.00031097,
+        0.000372226,
+        0.000447414,
+        0.000539789,
+        0.000652237,
+        0.000790197,
+        0.000958888,
+        0.001162561,
+        0.001405326,
+        0.001693772,
+        0.00203579,
+        0.002439294,
+        0.002912663,
+        0.0034654,
+        0.004107531,
+        0.004850844,
+        0.005706569,
+        0.006683733,
+        0.007789907,
+        0.009032682,
+        0.010420357,
+        0.011957942,
+        0.013645027,
+        0.015477079,
+        0.017445231,
+        0.019536453,
+        0.021722867,
+        0.02398675,
+        0.026268247,
+        0.02852752,
+        0.030708634,
+        0.032750249,
+        0.034588234,
+        0.036158548,
+        0.037400994,
+        0.038262923,
+        0.03870271,
+        0.038693,
+        0.038223771,
+        0.037301567,
+        0.03595149,
+        0.034215009,
+        0.032148072,
+        0.029817262,
+        0.027296331,
+        0.024661412,
+        0.021986919,
+        0.019342673,
+        0.01678852,
+        0.014375199,
+        0.012142843,
+        0.010119153,
+        0.008318055,
+        0.006743028,
+        0.005389766,
+        0.004247054,
+        0.003298127,
+        0.00252314,
+        0.001899835,
+        0.001407015,
+        0.001025652,
+        0.000737675,
+        0.000524979,
+        0.000369985,
+        0.000259181,
+        0.000182867,
+        0.000132295,
+        9.9258e-05,
+        7.6138e-05,
+        6.3067e-05,
+        4.6411e-05,
+        4.3827e-05,
+        4.1445e-05,
+        3.9297e-05,
+        3.7322e-05,
+        3.5513e-05,
+        3.3897e-05,
+        3.2459e-05,
+        3.1163e-05,
+        3.0011e-05,
+        2.9011e-05,
+        2.818e-05,
+        2.7452e-05,
+        2.686e-05,
+        2.6398e-05,
+        2.6069e-05,
+        2.5864e-05,
+        2.5766e-05,
+        2.5804e-05,
+        2.5938e-05,
+        2.6193e-05,
+        2.6556e-05,
+        2.7031e-05,
+        2.762e-05,
+        2.8302e-05,
+        2.9076e-05,
+        2.9968e-05,
+        3.0954e-05,
+        3.2045e-05,
+        3.3233e-05,
+        3.4541e-05,
+        3.5962e-05,
+        3.7501e-05,
+        3.9187e-05,
+        4.1018e-05,
+        4.3023e-05,
+        4.5201e-05,
+        4.7585e-05,
+        5.0226e-05,
+        5.3115e-05,
+        5.6341e-05,
+        5.9972e-05,
+        6.4063e-05,
+        6.8771e-05,
+        7.4262e-05,
+        8.0627e-05,
+        8.8247e-05,
+        9.7323e-05,
+        0.000108138,
+        0.000121076,
+        0.000136557,
+        0.000155159,
+        0.000177449,
+        0.000204049,
+        0.000235794,
+        0.000273481,
+        0.000317767,
+        0.000369487,
+        0.000429109,
+        0.000497108,
+        0.000573865,
+        0.000659595,
+        0.000754194,
+        0.000857541,
+        0.000969031,
+        0.001088037,
+        0.00121349,
+        0.001343868,
+        0.001477468,
+        0.001612199,
+        0.001745786,
+        0.001875718,
+        0.00199924,
+        0.002113553,
+        0.002215822,
+        0.002303383,
+        0.002373794,
+        0.002424998,
+        0.002455399,
+        0.002464085,
+        0.002450662,
+        0.002415466,
+        0.002359548,
+        0.002284485,
+        0.002192405,
+        0.002085879,
+        0.001967697,
+        0.001840849,
+        0.001708388,
+        0.001573087,
+        0.001437776,
+        0.001304877,
+        0.001176455,
+        0.001054208,
+        0.000939382,
+        0.000832911,
+        0.000735331,
+        0.000646761,
+        0.000567213,
+        0.000496437,
+        0.000433892,
+        0.000379191,
+        0.000331641,
+        0.000290465,
+        0.000254893,
+        0.000224285,
+        0.000197852,
+        0.000175108,
+        0.000155388,
+        0.000138304,
+        0.000123635,
+        0.000111012,
+        0.000100187,
+        9.0894e-05,
+        8.2895e-05,
+        7.6057e-05,
+        7.0191e-05,
+        6.5194e-05,
+        6.0892e-05,
+        5.716e-05,
+        5.3889e-05,
+        5.0979e-05,
+        4.8281e-05,
+        4.5755e-05,
+        4.3306e-05,
+        4.0866e-05,
+        3.8393e-05,
+        3.588e-05,
+        3.3317e-05,
+        3.0717e-05,
+        2.81e-05,
+        2.5523e-05,
+        2.3007e-05,
+        2.0577e-05,
+        1.8294e-05,
+        1.6159e-05,
+        1.4206e-05,
+        1.244e-05,
+        1.0855e-05,
+        9.461e-06,
+        8.233e-06,
+        7.165e-06,
+        6.241e-06,
+        5.436e-06,
+        4.731e-06,
+        4.114e-06,
+        3.566e-06,
+        3.086e-06,
+        2.675e-06,
+        2.315e-06,
+        2.002e-06,
+        1.74e-06,
+        1.525e-06,
+        1.342e-06,
+        1.188e-06,
+        1.063e-06,
+        9.63e-07,
+        8.85e-07,
+        8.24e-07,
+        7.79e-07,
+        7.45e-07,
+        7.23e-07,
+        7.09e-07,
+        7.01e-07,
+        6.95e-07,
+        6.89e-07,
+        6.83e-07,
+        6.77e-07,
+        6.68e-07,
+        6.55e-07,
+        6.39e-07,
+        6.2e-07,
+        6e-07,
+        5.77e-07,
+        5.52e-07,
+        5.26e-07,
+        5e-07,
+        4.74e-07,
+        4.48e-07,
+        4.27e-07,
+        4.08e-07,
+        3.92e-07,
+        3.81e-07,
+        3.76e-07,
+        3.76e-07,
+        3.81e-07,
+        3.92e-07,
+        4.11e-07,
+        4.37e-07,
+        4.68e-07,
+        5.08e-07,
+        5.58e-07,
+        6.15e-07,
+        6.78e-07,
+        7.51e-07,
+        8.36e-07
+      ],
+      "oklch_palette": [
+        {
+          "hex": "#23340C",
+          "oklch": [
+            0.30067,
+            0.06684,
+            129.918
+          ],
+          "weight": 0.90235
+        },
+        {
+          "hex": "#739BBD",
+          "oklch": [
+            0.67331,
+            0.06664,
+            243.755
+          ],
+          "weight": 0.06427
+        },
+        {
+          "hex": "#5A6234",
+          "oklch": [
+            0.47673,
+            0.06775,
+            117.297
+          ],
+          "weight": 0.15019
+        },
+        {
+          "hex": "#041801",
+          "oklch": [
+            0.18453,
+            0.05529,
+            139.54
+          ],
+          "weight": 0.11535
+        },
+        {
+          "hex": "#708EB8",
+          "oklch": [
+            0.64056,
+            0.07113,
+            256.628
+          ],
+          "weight": 0.01585
+        },
+        {
+          "hex": "#7BA2B5",
+          "oklch": [
+            0.68934,
+            0.0508,
+            230.07
+          ],
+          "weight": 0.01552
+        }
+      ]
+    },
+    "texture": {
+      "laplacian_variance": 447.4211,
+      "edge_density": 0.18733,
+      "strength": "medium"
+    },
+    "harmony": {
+      "rule": "monochromatic",
+      "anchor_hue": 130,
+      "target_hues": [
+        130
+      ],
+      "coverage": 0.71880724,
+      "utilization": 1.0,
+      "score": 0.81880724,
+      "weighted_hue_displacement": 15.42857492,
+      "alternatives": [
+        {
+          "rule": "analogous",
+          "anchor_hue": 131,
+          "target_hues": [
+            101,
+            131,
+            161
+          ],
+          "coverage": 0.76490108,
+          "utilization": 0.66666667,
+          "score": 0.79156775,
+          "weighted_hue_displacement": 12.04351682
+        },
+        {
+          "rule": "triad",
+          "anchor_hue": 9,
+          "target_hues": [
+            9,
+            129,
+            249
+          ],
+          "coverage": 0.76474903,
+          "utilization": 0.33333333,
+          "score": 0.75808236,
+          "weighted_hue_displacement": 8.16385537
+        },
+        {
+          "rule": "analogous_complementary",
+          "anchor_hue": 131,
+          "target_hues": [
+            101,
+            131,
+            161,
+            311
+          ],
+          "coverage": 0.76515414,
+          "utilization": 0.5,
+          "score": 0.75515414,
+          "weighted_hue_displacement": 10.69547449
+        }
+      ]
+    },
+    "visual_anchors": [
+      {
+        "x": 0.6245,
+        "y": 0.625,
+        "score": 0.20743,
+        "role": "luminance"
+      },
+      {
+        "x": 0.3741,
+        "y": 0.625,
+        "score": 0.20404,
+        "role": "luminance"
+      },
+      {
+        "x": 0.1245,
+        "y": 0.625,
+        "score": 0.18909,
+        "role": "luminance"
+      },
+      {
+        "x": 0.3741,
+        "y": 0.375,
+        "score": 0.18139,
+        "role": "luminance"
+      },
+      {
+        "x": 0.1245,
+        "y": 0.375,
+        "score": 0.18114,
+        "role": "luminance"
+      }
+    ],
+    "protected_people": {
+      "enabled": false,
+      "source": "none",
+      "boxes": [],
+      "policy": "not_required"
+    },
+    "proxy": {
+      "filename": "DSC_4458.JPG",
+      "analysis_width": 683,
+      "analysis_height": 1024
+    }
+  },
+  "candidates": [
+    {
+      "candidate_id": "native",
+      "route": "native",
+      "label": "Native",
+      "title": "Native",
+      "logic": "Tidy and extend the color, tonal, and texture language already present.",
+      "intent": "Tidy and extend the color, tonal, and texture language already present.",
+      "rationale": [
+        "Detected monochromatic harmony around 130°.",
+        "Preserve guidance: ['credible powder-blue hydrangea color', 'soft petal detail', 'wet leaf sheen', 'deep layered greens', 'the existing low-key exposure tendency']."
+      ],
+      "design_strength": 82.0,
+      "intensity": {
+        "minimum": 0.0,
+        "design": 100.0,
+        "default": 82.0,
+        "maximum": 200.0
+      },
+      "offline_ops": [
+        {
+          "op": "oklch_harmony_nudge",
+          "anchor_hue": 130,
+          "amount": 0.12
+        },
+        {
+          "op": "contrast",
+          "amount": 0.08
+        },
+        {
+          "op": "saturation",
+          "amount": 0.08
+        },
+        {
+          "op": "temperature",
+          "amount": 0.035
+        }
+      ],
+      "lr_recipe": {
+        "mode": "baseline_relative",
+        "parameters": {
+          "contrast": {
+            "operation": "delta",
+            "value": 8.0,
+            "interpolation": "linear"
+          },
+          "vibrance": {
+            "operation": "delta",
+            "value": 10.0,
+            "interpolation": "linear"
+          },
+          "clarity": {
+            "operation": "delta",
+            "value": 3.0,
+            "interpolation": "linear"
+          },
+          "temperature": {
+            "operation": "delta",
+            "value": 300.0,
+            "interpolation": "linear"
+          }
+        },
+        "preview_fidelity": "directional_not_pixel_equivalent",
+        "requires_dynamic_baseline": true
+      },
+      "people_protection": {
+        "required": false,
+        "preserve_amount": 0.35,
+        "strategy": "global_skin_guard_then_single_reverse_mask_if_needed",
+        "regions_digest": "f1797ed70653cdf39ae95d18428c614f5c859388e373eaca9b5fada372b425bd"
+      },
+      "risks": [
+        {
+          "kind": "warning",
+          "code": "preview_renderer_difference",
+          "message": "Offline preview is directional and must be read back in Lightroom."
+        }
+      ]
+    },
+    {
+      "candidate_id": "amplify",
+      "route": "amplify",
+      "label": "Amplify",
+      "title": "Amplify",
+      "logic": "Push the photograph's strongest temperature, contrast, hue, and material relationships.",
+      "intent": "Push the photograph's strongest temperature, contrast, hue, and material relationships.",
+      "rationale": [
+        "Amplify the source's warm axis and medium texture.",
+        "Amplify guidance: ['blue-green color separation', 'luminous flowers against dark foliage', 'humid botanical atmosphere', 'leaf texture without harsh halos']."
+      ],
+      "design_strength": 118.0,
+      "intensity": {
+        "minimum": 0.0,
+        "design": 100.0,
+        "default": 118.0,
+        "maximum": 200.0
+      },
+      "offline_ops": [
+        {
+          "op": "oklch_harmony_nudge",
+          "anchor_hue": 130,
+          "amount": 0.3
+        },
+        {
+          "op": "contrast",
+          "amount": 0.2
+        },
+        {
+          "op": "saturation",
+          "amount": 0.24
+        },
+        {
+          "op": "temperature",
+          "amount": 0.095
+        },
+        {
+          "op": "local_texture",
+          "amount": 0.14
+        }
+      ],
+      "lr_recipe": {
+        "mode": "baseline_relative",
+        "parameters": {
+          "contrast": {
+            "operation": "delta",
+            "value": 22.0,
+            "interpolation": "linear"
+          },
+          "vibrance": {
+            "operation": "delta",
+            "value": 24.0,
+            "interpolation": "linear"
+          },
+          "clarity": {
+            "operation": "delta",
+            "value": 12.0,
+            "interpolation": "linear"
+          },
+          "dehaze": {
+            "operation": "delta",
+            "value": 7.0,
+            "interpolation": "linear"
+          },
+          "temperature": {
+            "operation": "delta",
+            "value": 900.0,
+            "interpolation": "linear"
+          },
+          "color_grade_global_hue": {
+            "operation": "target",
+            "value": 130.0,
+            "interpolation": "circular_degrees"
+          },
+          "color_grade_global_saturation": {
+            "operation": "delta",
+            "value": 8.0,
+            "interpolation": "linear"
+          }
+        },
+        "preview_fidelity": "directional_not_pixel_equivalent",
+        "requires_dynamic_baseline": true
+      },
+      "people_protection": {
+        "required": false,
+        "preserve_amount": 0.6,
+        "strategy": "global_skin_guard_then_single_reverse_mask_if_needed",
+        "regions_digest": "f1797ed70653cdf39ae95d18428c614f5c859388e373eaca9b5fada372b425bd"
+      },
+      "risks": [
+        {
+          "kind": "warning",
+          "code": "gamut_pressure",
+          "message": "High strength can clip saturated display colors."
+        },
+        {
+          "kind": "warning",
+          "code": "preview_renderer_difference",
+          "message": "Offline preview is directional and must be read back in Lightroom."
+        }
+      ]
+    },
+    {
+      "candidate_id": "break",
+      "route": "break",
+      "label": "Break",
+      "title": "Break",
+      "logic": "Reconstruct the image with low_key_cross_process; this is not a stronger Amplify.",
+      "intent": "Reconstruct the image with low_key_cross_process; this is not a stronger Amplify.",
+      "rationale": [
+        "Selected low_key_cross_process from tone/color/texture structure.",
+        "Break guidance: ['low-key cross process', 'ink-dark shadow swallowing outside the flower anchors', 'cyan-blue floral highlights', 'a nocturnal botanical plate atmosphere']."
+      ],
+      "design_strength": 152.0,
+      "intensity": {
+        "minimum": 0.0,
+        "design": 100.0,
+        "default": 152.0,
+        "maximum": 200.0
+      },
+      "offline_ops": [
+        {
+          "op": "channel_matrix",
+          "matrix": [
+            [
+              1.08,
+              -0.08,
+              0.06
+            ],
+            [
+              -0.07,
+              1.0,
+              0.14
+            ],
+            [
+              0.1,
+              -0.05,
+              1.12
+            ]
+          ]
+        },
+        {
+          "op": "duotone",
+          "shadow_hue": 280,
+          "highlight_hue": 85,
+          "saturation": 0.46
+        },
+        {
+          "op": "crush_blacks",
+          "amount": 0.36
+        },
+        {
+          "op": "grain",
+          "amount": 0.12
+        }
+      ],
+      "lr_recipe": {
+        "mode": "baseline_relative",
+        "parameters": {
+          "contrast": {
+            "operation": "delta",
+            "value": 34.0,
+            "interpolation": "linear"
+          },
+          "blacks": {
+            "operation": "delta",
+            "value": -26.0,
+            "interpolation": "linear"
+          },
+          "vibrance": {
+            "operation": "delta",
+            "value": 10.0,
+            "interpolation": "linear"
+          },
+          "grain_amount": {
+            "operation": "delta",
+            "value": 24.0,
+            "interpolation": "linear"
+          },
+          "color_grade_shadow_hue": {
+            "operation": "target",
+            "value": 280.0,
+            "interpolation": "circular_degrees"
+          },
+          "color_grade_shadow_saturation": {
+            "operation": "target",
+            "value": 28.0,
+            "interpolation": "linear"
+          },
+          "color_grade_highlight_hue": {
+            "operation": "target",
+            "value": 85.0,
+            "interpolation": "circular_degrees"
+          },
+          "color_grade_highlight_saturation": {
+            "operation": "target",
+            "value": 22.0,
+            "interpolation": "linear"
+          },
+          "blue_primary_hue": {
+            "operation": "delta",
+            "value": -18.0,
+            "interpolation": "linear"
+          }
+        },
+        "preview_fidelity": "directional_not_pixel_equivalent",
+        "requires_dynamic_baseline": true
+      },
+      "people_protection": {
+        "required": false,
+        "preserve_amount": 0.92,
+        "strategy": "global_skin_guard_then_single_reverse_mask_if_needed",
+        "regions_digest": "f1797ed70653cdf39ae95d18428c614f5c859388e373eaca9b5fada372b425bd"
+      },
+      "risks": [
+        {
+          "kind": "intentional",
+          "code": "intentional_artifact",
+          "message": "low_key_cross_process may create deliberate color bias, dead blacks, stepping, or grain.",
+          "artifact": {
+            "purpose": "Reconstruct the photograph through low_key_cross_process instead of conventional correction.",
+            "scope": "global_frame",
+            "expected_signature": "Declared cast, black compression, palette discontinuity, stepping, or grain matching the selected operator graph.",
+            "people_impact": "No protected person is declared in PhotoDNA."
+          }
+        },
+        {
+          "kind": "warning",
+          "code": "person_reverse_mask",
+          "message": "If a person is present, Lightroom may need one reverse-compensation mask."
+        },
+        {
+          "kind": "warning",
+          "code": "preview_renderer_difference",
+          "message": "Offline preview is directional and must be read back in Lightroom."
+        }
+      ]
+    }
+  ],
+  "selection": {
+    "candidate_id": "native",
+    "requested_strength": 100.0
+  },
+  "execution": {
+    "state": "SELECTED",
+    "state_history": [
+      "ACQUIRE",
+      "ANALYZED",
+      "PREVIEWED",
+      "SELECTED"
+    ],
+    "transaction_id": null,
+    "desired": {
+      "candidate_id": "native",
+      "requested_strength": 100.0,
+      "strength_factor": 1.0,
+      "recipe_hash": "2ec1caca42eb4e1e6fba69c6b4baaa3b53c8eba3f491dc6cc19271f48187fb73",
+      "mode": "baseline_relative",
+      "parameter_specs": {
+        "contrast": {
+          "operation": "delta",
+          "value": 8.0,
+          "interpolation": "linear"
+        },
+        "vibrance": {
+          "operation": "delta",
+          "value": 10.0,
+          "interpolation": "linear"
+        },
+        "clarity": {
+          "operation": "delta",
+          "value": 3.0,
+          "interpolation": "linear"
+        },
+        "temperature": {
+          "operation": "delta",
+          "value": 300.0,
+          "interpolation": "linear"
+        }
+      },
+      "compiled_parameters": null,
+      "compilation": "bridge_reads_pinned_baseline_then_interpolates",
+      "people_protection": {
+        "required": false,
+        "preserve_amount": 0.35,
+        "strategy": "global_skin_guard_then_single_reverse_mask_if_needed",
+        "regions_digest": "f1797ed70653cdf39ae95d18428c614f5c859388e373eaca9b5fada372b425bd"
+      }
+    },
+    "applied": {},
+    "readback": {},
+    "failures": [],
+    "person_protection": {
+      "required": false,
+      "result": "pending"
+    }
+  },
+  "previews": {
+    "native": {
+      "path": "grading_sessions\\DSC_4458\\previews\\cache\\native-c286ba3c45e2def5a25387520bb8071786f142b3f332892b446991b8ced581df.jpg",
+      "strength": 82.0,
+      "cache_key": "c286ba3c45e2def5a25387520bb8071786f142b3f332892b446991b8ced581df",
+      "cache_hit": false,
+      "recipe_hash": "dca92d629c73017d1bb92309d341ff28728ece599e83f8bab95a662ce427a051",
+      "renderer_version": "offline-oklab-1.0.0",
+      "qc": {
+        "dimensions": {
+          "baseline": [
+            1200,
+            1800
+          ],
+          "output": [
+            1200,
+            1800
+          ]
+        },
+        "finite_fraction": 1.0,
+        "clip_fraction": {
+          "baseline_low": 0.182736,
+          "baseline_high": 0.000218,
+          "output_low": 0.230828,
+          "output_high": 1e-06
+        },
+        "luma_levels_8bit": {
+          "baseline": 243,
+          "output": 250
+        },
+        "possible_banding": false,
+        "mean_absolute_change": 0.015414,
+        "people_mean_change": null,
+        "environment_mean_change": null,
+        "people_mask_coverage": null
+      },
+      "detected_risks": []
+    },
+    "amplify": {
+      "path": "grading_sessions\\DSC_4458\\previews\\cache\\amplify-2820e035f66cb67cd487b73eeca64fc42b4628165be94b5dbe661abebfe8c52d.jpg",
+      "strength": 118.0,
+      "cache_key": "2820e035f66cb67cd487b73eeca64fc42b4628165be94b5dbe661abebfe8c52d",
+      "cache_hit": false,
+      "recipe_hash": "c596cf08115b122d509787a9aa51ceacecb2f1031688d178ed27633b01eb56c6",
+      "renderer_version": "offline-oklab-1.0.0",
+      "qc": {
+        "dimensions": {
+          "baseline": [
+            1200,
+            1800
+          ],
+          "output": [
+            1200,
+            1800
+          ]
+        },
+        "finite_fraction": 1.0,
+        "clip_fraction": {
+          "baseline_low": 0.182736,
+          "baseline_high": 0.000218,
+          "output_low": 0.284315,
+          "output_high": 0.001151
+        },
+        "luma_levels_8bit": {
+          "baseline": 243,
+          "output": 248
+        },
+        "possible_banding": false,
+        "mean_absolute_change": 0.050078,
+        "people_mean_change": null,
+        "environment_mean_change": null,
+        "people_mask_coverage": null
+      },
+      "detected_risks": []
+    },
+    "break": {
+      "path": "grading_sessions\\DSC_4458\\previews\\cache\\break-36a8eccb5ccffbec53883faa3b27782c878e81a80be45df1bdcf53163b437b6f.jpg",
+      "strength": 152.0,
+      "cache_key": "36a8eccb5ccffbec53883faa3b27782c878e81a80be45df1bdcf53163b437b6f",
+      "cache_hit": false,
+      "recipe_hash": "26df163b471f39d9f99706b0e3580eb9af19630ad87df99e41f993bfbf97b00c",
+      "renderer_version": "offline-oklab-1.0.0",
+      "qc": {
+        "dimensions": {
+          "baseline": [
+            1200,
+            1800
+          ],
+          "output": [
+            1200,
+            1800
+          ]
+        },
+        "finite_fraction": 1.0,
+        "clip_fraction": {
+          "baseline_low": 0.182736,
+          "baseline_high": 0.000218,
+          "output_low": 0.0,
+          "output_high": 0.0
+        },
+        "luma_levels_8bit": {
+          "baseline": 243,
+          "output": 158
+        },
+        "possible_banding": false,
+        "mean_absolute_change": 0.25456,
+        "people_mean_change": null,
+        "environment_mean_change": null,
+        "people_mask_coverage": null
+      },
+      "detected_risks": []
+    },
+    "contact_sheet": "grading_sessions\\DSC_4458\\previews\\DSC_4458-creative-contact-sheet.jpg"
+  },
+  "collection": {
+    "saved": false
+  }
+}

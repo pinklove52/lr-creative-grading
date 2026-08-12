@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lightroom 人物保护与精修"
+  short_description: "为既有创意调色补人物保护、复杂蒙版、裁切与 Lightroom 精修"
+  default_prompt: "使用 $lr-color-grading 在现有 GradeSession 内完成人物反向补偿或必要局部精修，不重新分析照片或重做全局配方。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lightroom 内生创意调色"
+  short_description: "从照片自身语言生成三案预览并通过事务式桥接完成高效可逆调色"
+  default_prompt: "使用 $lr-creative-grading 读取当前照片一次，生成 Native、Amplify、Break 三案同框预览；让我只选择一次后，事务式应用并保护人物。"
