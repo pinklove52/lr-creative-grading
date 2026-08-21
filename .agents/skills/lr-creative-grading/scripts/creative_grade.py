@@ -77,7 +77,7 @@ def _bridge_cli() -> Path:
     return repository_root / "lightroom-bridge" / "src" / "bridge-cli.mjs"
 
 
-def _call_bridge(method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _run_bridge(method: str, payload: dict[str, Any] | None = None) -> Any:
     cli = _bridge_cli()
     if not cli.is_file():
         raise OSError(f"Lightroom bridge CLI is missing: {cli}")
@@ -96,6 +96,23 @@ def _call_bridge(method: str, payload: dict[str, Any] | None = None) -> dict[str
         error = decoded.get("error", {})
         raise OSError(f"{error.get('code', 'BRIDGE_ERROR')}: {error.get('message', output)}")
     return decoded["result"]
+
+
+def _call_bridge(method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = _run_bridge(method, payload)
+    if not isinstance(result, dict):
+        raise OSError(f"BRIDGE_ERROR: {method} returned a non-object result")
+    return result
+
+
+def _call_bridge_sequence(calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    result = _run_bridge(
+        "__sequence",
+        {"calls": [{"method": method, "params": payload} for method, payload in calls]},
+    )
+    if not isinstance(result, list) or len(result) != len(calls) or not all(isinstance(item, dict) for item in result):
+        raise OSError("BRIDGE_ERROR: bridge sequence returned an invalid result")
+    return result
 
 
 def _merge_execution_patch(session: dict[str, Any], patch: dict[str, Any]) -> None:
@@ -254,16 +271,18 @@ def main(argv: list[str] | None = None) -> int:
                 "bridge_cli": _bridge_cli().is_file(),
             }
             if args.live:
-                checks["capabilities"] = _call_bridge("capabilities")
-                checks["target"] = _call_bridge("get_target_photo")
+                checks["capabilities"], checks["target"] = _call_bridge_sequence(
+                    [("capabilities", {}), ("get_target_photo", {})]
+                )
             _dump({"ok": all(bool(value) for value in checks.values()), "checks": checks})
             return 0
         if args.command == "acquire-live":
             workspace = Path(args.workspace).resolve()
             source_dir = workspace / "source"
             source_dir.mkdir(parents=True, exist_ok=False)
-            target = _call_bridge("get_target_photo")
-            proxy = _call_bridge("get_proxy", {"long_edge": args.long_edge})
+            target, proxy = _call_bridge_sequence(
+                [("get_target_photo", {}), ("get_proxy", {"long_edge": args.long_edge})]
+            )
             if any(target[field] != proxy["target"][field] for field in ("photo_id", "filename", "source_digest", "baseline_edit_digest")):
                 raise SessionValidationError("Lightroom target changed between identity and proxy acquisition")
             baseline = source_dir / "baseline.jpg"

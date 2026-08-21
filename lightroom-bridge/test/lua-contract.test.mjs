@@ -39,7 +39,13 @@ test("Lua transport enforces loopback-only SDK sockets, token, size, single-clie
   assert.match(transport, /CLIENT_LOCKED/);
   assert.match(transport, /DUPLICATE_REQUEST/);
   assert.match(transport, /recentRequestOrder > 256/);
-  assert.match(transport, /os\.rename\(temporaryPath, finalPath\)/);
+  assert.match(transport, /LrFileUtils\.move\(temporaryPath, finalPath\)/);
+  assert.match(transport, /49152 \+ \(\(portSeed % 8000\) \* 2\)/);
+  assert.match(transport, /port = Transport\.requestPort/);
+  assert.match(transport, /port = Transport\.responsePort/);
+  assert.match(transport, /publishDescriptor\(\)/);
+  assert.match(transport, /message\.recycle_response == true/);
+  assert.match(transport, /Transport\.responseSocket:reconnect\(\)/);
 });
 
 test("Lua transport accepts complete JSON when Lightroom strips the newline delimiter", async () => {

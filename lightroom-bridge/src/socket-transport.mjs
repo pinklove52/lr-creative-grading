@@ -9,7 +9,9 @@ const DEFAULT_MAX_BYTES = 1_048_576;
 
 function defaultSessionPath() {
   const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
-  return path.join(appData, "LrCreativeGradingBridge", "session.json");
+  // LrPathUtils.getStandardFilePath("appData") resolves to Lightroom's
+  // application-data directory on Windows, not the roaming-data root.
+  return path.join(appData, "Adobe", "Lightroom", "LrCreativeGradingBridge", "session.json");
 }
 
 function connectSocket(port, timeoutMs) {
@@ -37,6 +39,7 @@ export class LightroomSocketTransport {
       options.sessionPath || process.env.LR_CREATIVE_BRIDGE_SESSION || defaultSessionPath();
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.clientId = options.clientId ?? crypto.randomUUID();
+    this.recycleResponseAfterCall = options.recycleResponseAfterCall ?? false;
     this.requestSocket = null;
     this.responseSocket = null;
     this.session = null;
@@ -107,8 +110,13 @@ export class LightroomSocketTransport {
     // Connect the response channel first so Lightroom can answer immediately.
     this.responseSocket = await connectSocket(next.response_port, this.timeoutMs);
     this.attachResponseReader();
+    // A successful TCP connect only means the Windows accept queue has the
+    // connection. Lightroom's cooperative Lua task still needs a brief turn
+    // to attach its send-mode controller before a request can be answered.
+    await delay(150);
     try {
       this.requestSocket = await connectSocket(next.request_port, this.timeoutMs);
+      await delay(100);
     } catch (error) {
       this.close();
       throw error;
@@ -174,6 +182,7 @@ export class LightroomSocketTransport {
       token: this.session.token,
       method,
       params,
+      recycle_response: this.recycleResponseAfterCall,
     };
     const payload = `${JSON.stringify(envelope)}\n`;
     if (Buffer.byteLength(payload) > this.session.max_request_bytes) {
@@ -209,8 +218,13 @@ export class LightroomSocketTransport {
   }
 
   close() {
-    this.requestSocket?.destroy();
-    this.responseSocket?.destroy();
+    // Give Lightroom a normal EOF so its LrSocket onClosed callback can
+    // reconnect. An immediate destroy can leave the plug-in peer in
+    // CLOSE_WAIT on Windows and prevent the next short-lived CLI call.
+    this.requestSocket?.end();
+    this.responseSocket?.end();
+    this.requestSocket?.unref();
+    this.responseSocket?.unref();
     this.requestSocket = null;
     this.responseSocket = null;
     this.responseBuffer = "";

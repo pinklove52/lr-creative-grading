@@ -50,7 +50,7 @@ local function removeOwnDescriptor()
     if ok and type(contents) == "string" then
         local decodedOk, descriptor = pcall(Json.decode, contents)
         if decodedOk and descriptor.session_id == Transport.sessionId then
-            pcall(os.remove, path)
+            pcall(function() LrFileUtils.delete(path) end)
         end
     end
 end
@@ -85,12 +85,23 @@ local function publishDescriptor()
         return
     end
     -- Publish a complete descriptor, never a partially written JSON file.
-    pcall(os.remove, finalPath)
-    local renamed, renameReason = os.rename(temporaryPath, finalPath)
+    -- Lightroom's Windows Lua host can create the temporary file while its
+    -- built-in os.rename still fails. Use the SDK file API for the same-volume
+    -- move so publication works inside the plug-in sandbox.
+    if LrFileUtils.exists(finalPath) then
+        local removed, removeReason = LrFileUtils.delete(finalPath)
+        if not removed then
+            Transport.statusState = "error"
+            Transport.statusMessage = "Could not replace prior bridge session: " .. tostring(removeReason)
+            pcall(function() LrFileUtils.delete(temporaryPath) end)
+            return
+        end
+    end
+    local renamed, renameReason = LrFileUtils.move(temporaryPath, finalPath)
     if not renamed then
         Transport.statusState = "error"
         Transport.statusMessage = "Could not atomically publish bridge session: " .. tostring(renameReason)
-        pcall(os.remove, temporaryPath)
+        pcall(function() LrFileUtils.delete(temporaryPath) end)
         return
     end
     Transport.statusState = "listening"
@@ -185,6 +196,24 @@ local function processRequest(line)
             sendEnvelope({ request_id = requestId, ok = false, error = result })
         end
         Transport.busy = false
+        if message.recycle_response == true and Transport.running and Transport.responseSocket then
+            -- A short-lived CLI client cannot keep Lightroom's send-mode
+            -- connection alive. Reconnect after the response has entered the
+            -- socket buffer so the next authenticated client does not inherit
+            -- a Windows CLOSE_WAIT peer.
+            LrTasks.sleep(0.15)
+            Transport.activeClientId = nil
+            local recycled, recycleReason = pcall(function() Transport.responseSocket:reconnect() end)
+            if recycled then
+                Transport.statusState = "listening"
+                Transport.statusMessage = "The authenticated localhost bridge is ready."
+                publishDescriptor()
+            else
+                Transport.statusState = "error"
+                Transport.statusMessage = "Could not recycle response socket: " .. tostring(recycleReason)
+                removeOwnDescriptor()
+            end
+        end
     end)
 end
 
@@ -224,16 +253,19 @@ local function disconnected(kind, socket, reason)
     Transport.recentRequestOrder = {}
     Transport.statusState = "reconnecting"
     Transport.statusMessage = kind .. " socket disconnected: " .. tostring(reason or "closed")
-    if kind == "request" then Transport.requestPort = nil else Transport.responsePort = nil end
     removeOwnDescriptor()
     pcall(function() socket:reconnect() end)
+    -- The Windows SDK can omit onConnecting for a listening socket. The
+    -- session uses fixed per-start ports, so republish immediately and let a
+    -- later onError revoke the descriptor if rebinding fails.
+    publishDescriptor()
 end
 
 local function bindSockets(context)
     Transport.requestSocket = LrSocket.bind {
         functionContext = context,
         plugin = _PLUGIN,
-        port = 0,
+        port = Transport.requestPort,
         mode = "receive",
         onConnecting = function(_, port)
             Transport.requestPort = port
@@ -250,7 +282,7 @@ local function bindSockets(context)
     Transport.responseSocket = LrSocket.bind {
         functionContext = context,
         plugin = _PLUGIN,
-        port = 0,
+        port = Transport.responsePort,
         mode = "send",
         onConnecting = function(_, port)
             Transport.responsePort = port
@@ -264,6 +296,10 @@ local function bindSockets(context)
         onClosed = function(socket) disconnected("response", socket, "closed") end,
         onError = function(socket, reason) disconnected("response", socket, reason) end,
     }
+    -- Do not wait for onConnecting to publish. Lightroom Classic on Windows
+    -- can return bound controllers without invoking that callback until a
+    -- peer exists, which otherwise creates a connection bootstrap deadlock.
+    publishDescriptor()
 end
 
 function Transport.start()
@@ -274,6 +310,11 @@ function Transport.start()
     Transport.statusMessage = "Allocating authenticated localhost sockets."
     Transport.sessionId = LrUUID.generateUUID()
     Transport.token = (LrUUID.generateUUID() .. LrUUID.generateUUID()):gsub("%-", "")
+    local sessionHex = Transport.sessionId:gsub("%-", "")
+    local portSeed = tonumber(sessionHex:sub(1, 8), 16) or os.time()
+    local firstPort = 49152 + ((portSeed % 8000) * 2)
+    Transport.requestPort = firstPort
+    Transport.responsePort = firstPort + 1
     Transport.recentRequestIds = {}
     Transport.recentRequestOrder = {}
     LrTasks.startAsyncTask(function()
