@@ -8,7 +8,7 @@ export const TARGET = Object.freeze({
 });
 
 export const PARAMETER_SPECS = Object.freeze({
-  temperature: { operation: "delta", value: 300, interpolation: "linear" },
+  temperature: { operation: "delta", value: 30, interpolation: "linear" },
   tint: { operation: "target", value: 8, interpolation: "linear" },
   exposure: { operation: "delta", value: 0.35, interpolation: "linear" },
   highlights: { operation: "target", value: -24, interpolation: "linear" },

@@ -31,6 +31,12 @@ test("Lua source contains strict snapshot, proxy freshness, rollback, and thresh
   assert.match(core, /proxy_digest/);
 });
 
+test("Lua readback tolerates controller quantization but keeps structured values strict", async () => {
+  const core = await source("BridgeCore.lua");
+  assert.match(core, /CONTROLLER_VALUE_TOLERANCE\s*=\s*0\.999/);
+  assert.match(core, /entry\.engine\s*==\s*"controller"\s+and\s+CONTROLLER_VALUE_TOLERANCE\s+or\s+0\.0001/);
+});
+
 test("Lua transport enforces loopback-only SDK sockets, token, size, single-client and duplicate IDs", async () => {
   const transport = await source("Transport.lua");
   assert.match(transport, /host = "127\.0\.0\.1"/);

@@ -719,7 +719,10 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
             "contrast": _parameter("delta", native_contrast),
             "vibrance": _parameter("delta", native_vibrance),
             "clarity": _parameter("delta", native_clarity),
-            "temperature": _parameter("delta", 300.0 * temperature_direction),
+            # LrDevelopController exposes Temperature as a -100..100 slider,
+            # not as a Kelvin value. Keep the recipe in controller units so
+            # the bridge can compile it against the live Lightroom range.
+            "temperature": _parameter("delta", 30.0 * temperature_direction),
             "exposure": _parameter("delta", native_exposure),
         },
         [_risk("warning", "preview_renderer_difference", "Offline preview is directional and must be read back in Lightroom.")],
@@ -744,7 +747,7 @@ def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
             "vibrance": _parameter("delta", 24.0 + saturation_direction * 6.0),
             "clarity": _parameter("delta", (12.0 if texture["strength"] != "high" else 5.0) + texture_direction * 3.0),
             "dehaze": _parameter("delta", 7.0),
-            "temperature": _parameter("delta", 900.0 * temperature_direction),
+            "temperature": _parameter("delta", 60.0 * temperature_direction),
             "exposure": _parameter("delta", 0.25 * tone_direction),
             "color_grade_global_hue": _parameter("target", float(harmony["anchor_hue"]), "circular_degrees"),
             "color_grade_global_saturation": _parameter("delta", 8.0),

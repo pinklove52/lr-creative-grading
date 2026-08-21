@@ -39,6 +39,11 @@ At strength factor s = requested_strength / 100:
 | vignette | post_crop_vignette_amount, midpoint, roundness, feather, highlight_contrast | PostCropVignetteAmount, PostCropVignetteMidpoint, PostCropVignetteRoundness, PostCropVignetteFeather, PostCropVignetteHighlightContrast |
 | grain | grain_amount, grain_size, grain_roughness | GrainAmount, GrainSize, GrainFrequency |
 
+The Lightroom controller exposes `Temperature` and `Tint` on the controller
+slider scale (`-100..100`), not in Kelvin. Recipes sent through the controller
+bridge must use that scale; Kelvin values belong to a different develop-setting
+representation and must not be passed as controller deltas.
+
 White balance may be represented as absolute values by Lightroom. Use target for an authored absolute design value and delta for a baseline-relative shift. Strength interpolation must use the pinned baseline values and runtime range.
 
 ## Color mixer

@@ -8,6 +8,7 @@ local LrTasks = import "LrTasks"
 local LrUUID = import "LrUUID"
 
 local Catalog = require "ParameterCatalog"
+local Json = require "Json"
 
 local Bridge = {
     protocolVersion = 1,
@@ -468,10 +469,17 @@ local function getProxy(params)
     }
 end
 
+local function optionalPresetUuid(recipe)
+    local value = recipe.preset_uuid
+    if value == nil or value == false or value == Json.null then return nil end
+    requireString(value, "lr_recipe.preset_uuid")
+    return value
+end
+
 local function validatePreset(recipe)
-    if recipe.preset_uuid == nil or recipe.preset_uuid == false then return nil, 0 end
-    requireString(recipe.preset_uuid, "lr_recipe.preset_uuid")
-    local preset = LrApplication.developPresetByUuid(recipe.preset_uuid)
+    local presetUuid = optionalPresetUuid(recipe)
+    if not presetUuid then return nil, 0 end
+    local preset = LrApplication.developPresetByUuid(presetUuid)
     if not preset then bridgeError("PRESET_NOT_FOUND", "No Lightroom preset exists for the supplied UUID") end
     local ok, settings = LrTasks.pcall(function() return preset:getSetting() end)
     if not ok or type(settings) ~= "table" then
@@ -583,6 +591,7 @@ local function buildPlan(request, beforeSettings)
     if type(recipe) ~= "table" or type(recipe.desired_parameters) ~= "table" then
         bridgeError("INVALID_REQUEST", "lr_recipe.desired_parameters must be an object")
     end
+    local presetUuid = optionalPresetUuid(recipe)
     local preset, _ = validatePreset(recipe)
     local presetAmount = recipe.preset_amount or 100
     if not isFinite(presetAmount) or presetAmount ~= math.floor(presetAmount)
@@ -598,7 +607,7 @@ local function buildPlan(request, beforeSettings)
     local plan = {
         factor = factor,
         preset = factor == 0 and nil or preset,
-        preset_uuid = recipe.preset_uuid,
+        preset_uuid = presetUuid,
         preset_amount = factor == 0 and 0 or compiledPresetAmount,
         numeric = {}, curves = {}, ordered = {},
         desired = {}, specs = recipe.desired_parameters,
@@ -687,6 +696,12 @@ local function valuesEqual(left, right, tolerance)
     return true
 end
 
+-- Lightroom's controller surface quantizes its values before exposing them
+-- through getValue. Keep structured develop settings strict, but allow the
+-- controller's sub-unit write/readback quantization without masking a real
+-- one-point drift.
+local CONTROLLER_VALUE_TOLERANCE = 0.999
+
 local function readActual(plan, photo)
     local actual, failures = {}, {}
     local settings = developSettings(photo)
@@ -700,7 +715,8 @@ local function readActual(plan, photo)
                 value, reason = controllerValue(entry)
             end
             actual[entry.logical] = value
-            if value == nil or not valuesEqual(value, plan.desired[entry.logical]) then
+            local tolerance = entry.engine == "controller" and CONTROLLER_VALUE_TOLERANCE or 0.0001
+            if value == nil or not valuesEqual(value, plan.desired[entry.logical], tolerance) then
                 failures[#failures + 1] = {
                     parameter = entry.logical,
                     code = "READBACK_MISMATCH",

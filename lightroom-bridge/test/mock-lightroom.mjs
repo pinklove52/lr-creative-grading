@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 
 const DEFAULT_RANGE = [-100, 100];
 const RANGES = {
-  temperature: [2000, 50000], tint: [-150, 150], exposure: [-5, 5],
+  temperature: [-100, 100], tint: [-100, 100], exposure: [-5, 5],
   color_grade_shadow_hue: [0, 360], color_grade_midtone_hue: [0, 360],
   color_grade_highlight_hue: [0, 360], color_grade_global_hue: [0, 360],
   color_grade_shadow_saturation: [0, 100], color_grade_midtone_saturation: [0, 100],
@@ -25,7 +25,7 @@ export class MockLightroom {
   constructor(target, knownParameters) {
     this.target = { ...target };
     this.known = new Set(knownParameters);
-    this.values = Object.fromEntries([...this.known].map((key) => [key, key === "temperature" ? 5000 : 0]));
+    this.values = Object.fromEntries([...this.known].map((key) => [key, 0]));
     this.editRevision = 0;
     this.transactions = new Map();
     this.threshold = 0.5;
