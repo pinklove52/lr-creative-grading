@@ -1,7 +1,7 @@
 # File Queue Bridge（文件队列桥 v2）
 
-> 当前已验收里程碑：`v0.2.0-m2`（M1 文件队列基础能力 + M2 只读 SDK 实机验收）。
-> `Config.stage` 保持为 `"M2"`；M3 写事务能力尚未开放。
+> 最近已验收里程碑：`v0.2.0-m2`（M1 文件队列基础能力 + M2 只读 SDK 实机验收）。
+> 当前开发阶段：M3；`Config.stage` 已切换为 `"M3"`，写事务只在测试目录/测试照片副本上验收。
 
 Lightroom Classic ↔ Node/MCP 的本地文件队列桥。取代旧 `lightroom-bridge` 的双端口
 `LrSocket` 长连接方案（保留为 `socket-experimental` 实验分支），只通过用户级目录中的

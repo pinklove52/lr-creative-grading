@@ -7,7 +7,7 @@
 -- 切换后重启桥（Stop → Start），新门控随 session.json 发布。
 local Config = {}
 
-Config.stage = "M2"
+Config.stage = "M3"
 
 Config.protocol_version = 2
 Config.plugin_version = "0.2.0"
