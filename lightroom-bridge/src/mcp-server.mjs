@@ -1,10 +1,21 @@
 #!/usr/bin/env node
 import readline from "node:readline";
 import { McpCore } from "./mcp-core.mjs";
+import { LightroomFileQueueTransport } from "./file-queue-transport.mjs";
 import { LightroomSocketTransport } from "./socket-transport.mjs";
 
 const MAX_STDIN_LINE_BYTES = 1_048_576;
-const transport = new LightroomSocketTransport();
+
+// 默认使用文件队列传输；旧双端口 LrSocket 保留为实验分支，
+// 通过 LR_BRIDGE_TRANSPORT=socket 显式启用。
+function createTransport() {
+  if (process.env.LR_BRIDGE_TRANSPORT === "socket") {
+    return new LightroomSocketTransport();
+  }
+  return new LightroomFileQueueTransport();
+}
+
+const transport = createTransport();
 const core = new McpCore(transport);
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 
