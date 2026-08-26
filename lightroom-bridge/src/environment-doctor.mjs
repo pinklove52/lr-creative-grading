@@ -9,7 +9,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { ACCEPTED_LR_VERSION_PREFIX, isAcceptedLrVersion } from "./version-policy.mjs";
+import { ACCEPTED_LR_VERSION_PREFIX, evaluateLrVersion } from "./version-policy.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -33,7 +33,7 @@ async function checkLrExecutable() {
       ], { timeout: 10_000, windowsHide: true });
       version = stdout.trim() || null;
     } catch {
-      // 版本读取失败不视为硬失败；版本白名单单独检查。
+      // 可执行文件仍存在，但版本白名单硬门禁会拒绝未知版本。
     }
     return result("lr_executable", true, { path: LR_EXE, product_version: version });
   } catch (error) {
@@ -47,13 +47,13 @@ async function checkLrVersionWhitelist(lr) {
     match_mode: "prefix",
     actual: "unknown",
   });
-  const actual = lr.detail?.product_version;
-  const accepted = isAcceptedLrVersion(actual);
-  // actual 为 null（读取失败）时不允许写操作。
-  return result("lr_version_whitelist", accepted, {
+  const evaluated = evaluateLrVersion(lr.detail?.product_version);
+  return result("lr_version_whitelist", evaluated.accepted, {
     accepted_prefix: ACCEPTED_LR_VERSION_PREFIX,
     match_mode: "prefix",
-    actual,
+    actual: evaluated.actual,
+    known: evaluated.known,
+    reason: evaluated.reason,
   });
 }
 
@@ -158,8 +158,10 @@ async function checkPluginIntegrity() {
     }
     return result("plugin_integrity", mismatches.length === 0, { checksums, mismatches });
   } catch {
-    // 尚无 checksums.txt：提示生成，不判失败（M4 交付物）。
-    return result("plugin_integrity", true, { checksums: null, note: "checksums.txt 未生成；M4 前应补发" });
+    return result("plugin_integrity", false, {
+      checksums: null,
+      note: "checksums.txt 缺失；禁止进入 Lightroom 写模式",
+    });
   }
 }
 
@@ -207,7 +209,13 @@ async function main() {
     allowed_dirs: await checkAllowedDirs(),
     windows_event_log: await checkRecentLrCrashes(),
   };
-  const hard = [checks.lr_executable, checks.node_version, checks.queue_writable];
+  const hard = [
+    checks.lr_executable,
+    checks.lr_version_whitelist,
+    checks.node_version,
+    checks.queue_writable,
+    checks.plugin_integrity,
+  ];
   const report = {
     ok: hard.every((item) => item.ok),
     generated_at: new Date().toISOString(),

@@ -22,7 +22,7 @@ const transport =
 const core = new McpCore(transport);
 
 function callMethod(name, params) {
-  if (name === "ping" || name === "status") return transport.call(name, params);
+  if (name === "ping" || name === "status" || name === "probe_core33_jpg") return transport.call(name, params);
   return core.callTool(name, params);
 }
 

@@ -14,14 +14,19 @@ test("Lua plug-in declares modern minimum SDK and all public methods", async () 
   assert.match(info, /LrSdkMinimumVersion\s*=\s*14\.0/);
   for (const method of [
     "capabilities", "get_target_photo", "get_proxy", "get_settings",
-    "apply_transaction", "readback", "rollback",
+    "apply_transaction", "readback", "rollback", "probe_core33_jpg",
   ]) assert.match(core, new RegExp(`${method}\\s*=`));
+});
+
+test("Lua business core exposes the traceable Core33 probe release label", async () => {
+  const core = await source("BridgeCore.lua");
+  assert.match(core, /coreVersion = "0\.3\.0-core33-probe\.7"/);
+  assert.match(core, /plugin_version = Bridge\.coreVersion/);
 });
 
 test("Lua source contains strict snapshot, proxy freshness, rollback, and threshold cleanup guards", async () => {
   const core = await source("BridgeCore.lua");
   assert.match(core, /createDevelopSnapshot\(name, false\)/);
-  assert.match(core, /request_reference/);
   assert.match(core, /before\.baseline_edit_digest ~= after\.baseline_edit_digest/);
   assert.match(core, /PROXY_STALE/);
   assert.match(core, /BASELINE_CHANGED/);
@@ -31,10 +36,55 @@ test("Lua source contains strict snapshot, proxy freshness, rollback, and thresh
   assert.match(core, /proxy_digest/);
 });
 
+test("Lua proxy uses a current-render export and never a cached thumbnail", async () => {
+  const core = await source("BridgeCore.lua");
+  assert.match(core, /local LrExportSession = import "LrExportSession"/);
+  assert.match(core, /local exportSession = LrExportSession/);
+  assert.match(core, /rendition:waitForRender\(\)/);
+  assert.match(core, /LR_format = "JPEG"/);
+  assert.match(core, /LR_reimportExportedPhoto = false/);
+  assert.match(core, /LR_useWatermark = false/);
+  assert.match(core, /rendering = "Lightroom export-session current-render JPEG"/);
+  assert.doesNotMatch(core, /requestJpegThumbnail/);
+});
+
 test("Lua readback tolerates controller quantization but keeps structured values strict", async () => {
   const core = await source("BridgeCore.lua");
   assert.match(core, /CONTROLLER_VALUE_TOLERANCE\s*=\s*0\.999/);
   assert.match(core, /entry\.engine\s*==\s*"controller"\s+and\s+CONTROLLER_VALUE_TOLERANCE\s+or\s+0\.0001/);
+});
+
+test("Lua preflight exposes only unprobed Core33 and verifies rollback digests", async () => {
+  const [core, catalog] = await Promise.all([source("BridgeCore.lua"), source("ParameterCatalog.lua")]);
+  assert.doesNotMatch(catalog, /logical = "temperature"/);
+  assert.match(catalog, /Catalog\.scopeId = "jpg-core33-v1"/);
+  assert.equal([...catalog.matchAll(/logical\s*=\s*"/g)].length, 33);
+  assert.match(core, /entry\.probeStatus ~= "write_probed"/);
+  assert.match(core, /UNPROBED_PARAMETER/);
+  assert.match(core, /waitForBaselineDigest/);
+  assert.match(core, /digest_verified = true/);
+  assert.match(core, /snapshot was created but its ID did not become visible/);
+  assert.match(core, /pre_transaction_edit_digest = target\.baseline_edit_digest/);
+  assert.match(core, /recovered_from_grade_session = true/);
+  assert.match(core, /required_fields = \{ "target", "snapshot_id", "pre_transaction_edit_digest" \}/);
+  assert.match(core, /diffSettingsSummaries/);
+  assert.match(core, /differences_truncated = differencesTruncated/);
+  assert.match(core, /pre_transaction_settings_summary = settingsSummary\(beforeSettings\)/);
+  assert.match(core, /local function waitForAppliedDigest/);
+  assert.match(core, /transaction\.applied_edit_digest = waitForAppliedDigest/);
+  assert.match(core, /applied_edit_digest = transaction\.applied_edit_digest/);
+  assert.match(core, /local function rollback\(params\)\s+-- Lightroom's snapshot APIs[\s\S]*?ensureDevelopModule\(\)/);
+});
+
+test("Core33 probe waits for published settings and refreshes controller state after rollback", async () => {
+  const core = await source("BridgeCore.lua");
+  assert.match(core, /local function waitForAppliedState/);
+  assert.match(core, /stableCount >= 3/);
+  assert.match(core, /lastDigest ~= baseline/);
+  assert.match(core, /local function waitForBaselineState/);
+  assert.match(core, /controllerBaselineMatches/);
+  assert.match(core, /switchToModule, "library"/);
+  assert.match(core, /diffSettingsSummaries\(\s*baselineSummary, appliedSummary, 64/);
 });
 
 test("Lua transport enforces loopback-only SDK sockets, token, size, single-client and duplicate IDs", async () => {

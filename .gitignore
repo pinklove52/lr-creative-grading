@@ -5,3 +5,12 @@ node_modules/
 # GradeSession atomic-write and recovery artifacts
 *.tmp
 *.bak
+
+# Local Lightroom runs, rendered previews, personal photos, and machine evidence
+/artifacts/
+/grading_sessions/
+/recovery_backup/
+
+# Local one-off machine administration helper and obsolete prototype copy
+/scripts/install-hbc-hosts-block.ps1
+/lightroom-file-polling-bridge/plugin/FilePollingBridge.lrplugin/

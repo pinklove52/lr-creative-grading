@@ -1,0 +1,49 @@
+{
+  "scope_id": "jpg-core33-v1",
+  "environment": {
+    "os": "Windows 11",
+    "lightroom_product_version": "15.0.1",
+    "source_formats": ["JPG", "JPEG"]
+  },
+  "parameters": [
+    { "logical": "exposure", "lr": "Exposure", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "contrast", "lr": "Contrast", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "highlights", "lr": "Highlights", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "shadows", "lr": "Shadows", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "whites", "lr": "Whites", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "blacks", "lr": "Blacks", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "texture", "lr": "Texture", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "clarity", "lr": "Clarity", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "dehaze", "lr": "Dehaze", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "hue_red", "lr": "HueAdjustmentRed", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "hue_orange", "lr": "HueAdjustmentOrange", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "hue_yellow", "lr": "HueAdjustmentYellow", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "hue_green", "lr": "HueAdjustmentGreen", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "hue_aqua", "lr": "HueAdjustmentAqua", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "hue_blue", "lr": "HueAdjustmentBlue", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "hue_purple", "lr": "HueAdjustmentPurple", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "hue_magenta", "lr": "HueAdjustmentMagenta", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "saturation_red", "lr": "SaturationAdjustmentRed", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "saturation_orange", "lr": "SaturationAdjustmentOrange", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "saturation_yellow", "lr": "SaturationAdjustmentYellow", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "saturation_green", "lr": "SaturationAdjustmentGreen", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "saturation_aqua", "lr": "SaturationAdjustmentAqua", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "saturation_blue", "lr": "SaturationAdjustmentBlue", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "saturation_purple", "lr": "SaturationAdjustmentPurple", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "saturation_magenta", "lr": "SaturationAdjustmentMagenta", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "luminance_red", "lr": "LuminanceAdjustmentRed", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "luminance_orange", "lr": "LuminanceAdjustmentOrange", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "luminance_yellow", "lr": "LuminanceAdjustmentYellow", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "luminance_green", "lr": "LuminanceAdjustmentGreen", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "luminance_aqua", "lr": "LuminanceAdjustmentAqua", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "luminance_blue", "lr": "LuminanceAdjustmentBlue", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "luminance_purple", "lr": "LuminanceAdjustmentPurple", "engine": "controller", "status": "write_probed", "tolerance": 0.01 },
+    { "logical": "luminance_magenta", "lr": "LuminanceAdjustmentMagenta", "engine": "controller", "status": "write_probed", "tolerance": 0.01 }
+  ],
+  "evidence": {
+    "capabilities_path": "artifacts/core33/capabilities-lr15.0.1-jpg-core33.json",
+    "plugin_build": "0.3.0-core33-probe.5",
+    "checksums_digest": "3487990babb3d2ff23e57d822457b34001abe03c647fb56c6e68c5a7e9c427fd",
+    "test_chart_digest": "fab57055318327432105d5a7f58ad465ee304267b4e157f85db0c4849a708b33"
+  }
+}

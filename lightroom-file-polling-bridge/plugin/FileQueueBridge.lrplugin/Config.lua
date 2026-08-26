@@ -7,10 +7,13 @@
 -- 切换后重启桥（Stop → Start），新门控随 session.json 发布。
 local Config = {}
 
+-- Candidate M3 acceptance mode. Formal certification remains M2 until the
+-- Core33 live matrix and verify-stages M3 report pass. Normal writes still
+-- fail closed while the current-build capability table is absent.
 Config.stage = "M3"
 
 Config.protocol_version = 2
-Config.plugin_version = "0.2.0"
+Config.plugin_version = "0.3.0-core33-probe.7"
 Config.queue_root_name = "LrCreativeGradingBridge-v2"
 
 -- 请求/响应硬限制；两侧实现同一套规则，互不信任。
@@ -31,7 +34,7 @@ Config.enabled_methods_by_stage = {
     M1 = { "ping", "capabilities", "status" },
     M2 = { "ping", "capabilities", "status", "get_target_photo", "get_settings", "get_proxy" },
     M3 = { "ping", "capabilities", "status", "get_target_photo", "get_settings", "get_proxy",
-           "apply_transaction", "readback", "rollback" },
+           "apply_transaction", "readback", "rollback", "probe_core33_jpg" },
 }
 
 function Config.enabledMethods()

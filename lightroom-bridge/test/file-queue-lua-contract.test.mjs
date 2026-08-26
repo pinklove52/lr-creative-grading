@@ -56,13 +56,13 @@ test("stage gating exposes exactly the M1/M2/M3 method sets from the plan", asyn
   const grab = (stage) => {
     const match = new RegExp(`${stage}\\s*=\\s*\\{([^}]*)\\}`).exec(config);
     assert.ok(match, `${stage} table not found`);
-    return [...match[1].matchAll(/"([a-z_]+)"/g)].map((item) => item[1]);
+    return [...match[1].matchAll(/"([a-z0-9_]+)"/g)].map((item) => item[1]);
   };
   assert.deepEqual(grab("M1").sort(), ["capabilities", "ping", "status"]);
   assert.deepEqual(grab("M2").sort(), ["capabilities", "get_proxy", "get_settings", "get_target_photo", "ping", "status"]);
   assert.deepEqual(grab("M3").sort(), [
     "apply_transaction", "capabilities", "get_proxy", "get_settings",
-    "get_target_photo", "ping", "readback", "rollback", "status",
+    "get_target_photo", "ping", "probe_core33_jpg", "readback", "rollback", "status",
   ]);
   // 实机验收推进时允许切换当前阶段，但不得绕过已定义的门控表。
   const activeStage = /Config\.stage\s*=\s*"(M[123])"/.exec(config)?.[1];
@@ -127,10 +127,10 @@ test("reused BridgeCore.lua stays identical to the canonical lightroom-bridge co
   assert.match(copy, /LrTasks\.pcall\(Bridge\.invoke, method, params or \{\}\)/);
   assert.match(copy, /local settings = photo:getDevelopSettings\(\)/);
   assert.doesNotMatch(copy, /pcall\(function\(\) return photo:getDevelopSettings\(\) end\)/);
-  assert.match(copy, /label = "square"/);
-  assert.match(copy, /label = "width_only"/);
-  assert.match(copy, /label = "smallest_available"/);
-  assert.match(copy, /photo:requestJpegThumbnail\(variant\.width, variant\.height/);
+  assert.match(copy, /local LrExportSession = import "LrExportSession"/);
+  assert.match(copy, /local exportSession = LrExportSession/);
+  assert.match(copy, /rendition:waitForRender\(\)/);
+  assert.doesNotMatch(copy, /requestJpegThumbnail/);
 });
 
 test("QueueTransport never imports LrSocket or the legacy socket Transport", async () => {
@@ -138,4 +138,26 @@ test("QueueTransport never imports LrSocket or the legacy socket Transport", asy
   // 头部注释里说明与 LrSocket 的区别是允许的；禁止的是实际导入与使用
   assert.equal(/import\s+"LrSocket"/.test(source), false);
   assert.equal(source.includes("Transport.requestSocket"), false);
+});
+
+test("QueueTransport releases poison requests even when quarantine move fails", async () => {
+  const source = await readPlugin("QueueTransport.lua");
+  assert.match(source, /pcall\(LrFileUtils\.move, sourcePath, destination\)/);
+  assert.match(source, /pcall\(LrFileUtils\.delete, sourcePath\)/);
+  assert.match(source, /request_discarded_after_quarantine_failure/);
+  assert.match(source, /Queue\.state = "quarantine_failed"/);
+  assert.match(source, /moveToFailed\(slot, "SLOT_READ_FAILED"/);
+});
+
+test("QueueTransport reload safety uses published session ownership", async () => {
+  const source = await readPlugin("QueueTransport.lua");
+  assert.match(source, /published\.token ~= Queue\.sessionToken/);
+  assert.match(source, /retainSessionOwnership\("poll_loop"\)/);
+  assert.match(source, /retainSessionOwnership\("poll_claim"\)/);
+  assert.match(source, /retainSessionOwnership\("heartbeat_loop"\)/);
+  assert.match(source, /event = event/);
+  assert.match(source, /"bridge_superseded"/);
+  assert.match(source, /local wasRunning = Queue\.running/);
+  assert.doesNotMatch(source, /if not Queue\.running then return "not_running" end/);
+  assert.match(source, /pcall\(function\(\) LrFileUtils\.delete\(Queue\.paths\.sessionFile\) end\)/);
 });

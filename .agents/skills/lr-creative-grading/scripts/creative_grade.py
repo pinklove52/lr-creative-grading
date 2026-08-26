@@ -94,7 +94,9 @@ def _run_bridge(method: str, payload: dict[str, Any] | None = None) -> Any:
     decoded = json.loads(output) if output else {}
     if completed.returncode != 0 or not decoded.get("ok"):
         error = decoded.get("error", {})
-        raise OSError(f"{error.get('code', 'BRIDGE_ERROR')}: {error.get('message', output)}")
+        details = error.get("details")
+        detail_text = f" details={json.dumps(details, ensure_ascii=False, sort_keys=True)}" if details is not None else ""
+        raise OSError(f"{error.get('code', 'BRIDGE_ERROR')}: {error.get('message', output)}{detail_text}")
     return decoded["result"]
 
 
@@ -127,6 +129,7 @@ def _merge_execution_patch(session: dict[str, Any], patch: dict[str, Any]) -> No
         "APPLIED": ["ROLLED_BACK"],
         "PERSON_PROTECTED": ["ROLLED_BACK"],
         "VERIFIED": ["ROLLED_BACK"],
+        "DONE": ["ROLLED_BACK"],
     }
     if append and append != allowed.get(execution["state"]):
         raise SessionValidationError(f"invalid bridge state_history_append from {execution['state']}: {append}")
@@ -134,7 +137,16 @@ def _merge_execution_patch(session: dict[str, Any], patch: dict[str, Any]) -> No
         if state != execution["state"]:
             execution["state_history"].append(state)
             execution["state"] = state
-    for field in ("transaction_id", "desired", "applied", "readback", "failures", "skipped", "unsupported", "bridge_state"):
+    for field in (
+        "transaction_id", "desired", "applied", "readback", "failures",
+        "skipped", "unsupported", "bridge_state", "snapshot_id", "snapshot",
+        "pre_transaction_edit_digest", "pre_transaction_settings_summary",
+        "applied_edit_digest",
+    ):
+        if patch.get("state") == "ROLLED_BACK" and field in {"desired", "applied"}:
+            # A restart-recovered Lightroom transaction only carries the minimal
+            # compiled journal. Keep the reviewed GradeSession intent intact.
+            continue
         if field in patch:
             execution[field] = patch[field]
     if patch.get("state") == "ROLLED_BACK" and execution["state"] != "ROLLED_BACK":
@@ -150,9 +162,25 @@ def _transaction_reference(session: dict[str, Any]) -> dict[str, Any]:
     }
     current_digest = execution.get("person_protection", {}).get("post_edit_digest")
     if not current_digest:
+        current_digest = execution.get("applied_edit_digest")
+    if not current_digest:
         current_digest = execution.get("readback", {}).get("baseline_edit_digest")
     if current_digest:
         reference["expected_current_edit_digest"] = current_digest
+    snapshot = execution.get("snapshot") or {}
+    snapshot_id = execution.get("snapshot_id") or snapshot.get("id")
+    if snapshot_id:
+        reference["snapshot_id"] = snapshot_id
+        reference["snapshot_name"] = snapshot.get("name")
+    pre_digest = execution.get("pre_transaction_edit_digest")
+    if pre_digest:
+        reference["pre_transaction_edit_digest"] = pre_digest
+    settings_summary = execution.get("pre_transaction_settings_summary")
+    if isinstance(settings_summary, dict):
+        reference["pre_transaction_settings_summary"] = settings_summary
+    compiled = execution.get("desired", {}).get("compiled_parameters")
+    if isinstance(compiled, dict):
+        reference["compiled_parameters"] = compiled
     return reference
 
 

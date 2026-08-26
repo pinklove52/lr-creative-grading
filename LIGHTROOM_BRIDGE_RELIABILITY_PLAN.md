@@ -34,7 +34,7 @@
 | Lightroom SDK 声明 | 插件使用 `LrSdkVersion = 14.0`；实际能力以 15.0.1 产品版本族宿主实机探测结果为准 |
 | Lightroom 网络状态 | Adobe 网络永久离线；不得要求登录、更新、激活、同步或恢复 Adobe 域名访问 |
 | 网络代理环境 | Clash Verge TUN、全局模式、Fake-IP DNS；当前由 Clash 接管系统流量 |
-| 稳定性规则 | `hbc.adobe.io` 必须保持阻断；该规则是当前 Lightroom 稳定运行基线的一部分 |
+| 稳定性规则 | `hbc.adobe.io` 必须保持双层阻断：Windows hosts 为独立主保护，Clash hosts 为 TUN 运行时保护 |
 | 插件运行权限 | 标准用户权限；设计、安装、运行和卸载不得依赖管理员权限 |
 | Node 环境 | 当前实测 Node.js `v24.18.0`；正式交付要固定最低/最高受支持版本并随包离线校验 |
 | 目录策略 | 首轮测试只使用独立测试目录和测试照片副本，不使用正式目录 |
@@ -55,7 +55,7 @@
 以下行为视为设计失败：
 
 - 为了让插件加载或运行而临时恢复 Adobe 联网。
-- 修改、删除或绕过 `hbc.adobe.io` 阻断。
+- 修改、删除或绕过 `hbc.adobe.io` 的 Windows hosts 或 Clash 双层阻断。
 - 插件启动时探测 Adobe 服务器、登录状态或 Creative Cloud 状态。
 - 因网络失败而无限重试、阻塞 Lightroom 主界面或累计后台任务。
 - 把地图模块的离线提示误判为桥加载失败。
@@ -69,7 +69,7 @@
 - Windows 版本和构建号。
 - 插件版本、协议版本、Node 版本和能力表版本。
 - 当前目录身份以及是否为批准的测试/生产目录。
-- Clash 稳定性规则是否仍存在；只检查本地配置，不主动请求 Adobe 域名。
+- Windows hosts 与 Clash 的双层稳定性规则是否仍存在；只检查本地配置，不主动请求 Adobe 域名。
 
 写能力使用**受限前缀版本白名单**：
 
@@ -93,7 +93,7 @@ Lightroom 产品版本以 15.0.1 开头 + 已验收能力表
 2. 插件目录是否为本次验收过的版本，SHA-256 是否匹配。
 3. Node 版本是否在锁定范围内，运行依赖是否全部位于本地。
 4. 队列目录是否位于当前用户 AppData、可读写且 ACL 未异常放宽。
-5. `hbc.adobe.io` 本地阻断配置是否仍存在，不向该域名发起连接测试。
+5. `hbc.adobe.io` 的 Windows hosts 与 Clash 双层阻断是否仍存在，不向该域名发起连接测试。
 6. 当前 Lightroom 版本是否存在匹配的已签名能力表。
 7. 当前目录是否为本阶段允许的测试或生产目录。
 8. Windows 最近是否出现 Lightroom 崩溃或应用挂起事件。
@@ -105,7 +105,7 @@ Lightroom 产品版本以 15.0.1 开头 + 已验收能力表
 除常规测试外，必须覆盖：
 
 - Adobe 域名全部不可达时，插件加载、心跳、读取、应用和回滚均正常。
-- `hbc.adobe.io` 保持阻断至少 60 分钟，桥不尝试绕过。
+- `hbc.adobe.io` 的 Windows hosts 与 Clash 双层阻断保持至少 60 分钟，桥不尝试绕过。
 - 地图模块离线提示出现或地图不可用时，桥仍能区分自身健康状态。
 - Clash 重启、TUN 短暂中断、DNS 改变时，文件队列桥不受影响。
 - 断开普通互联网后，桥的全部受支持能力仍能工作。
@@ -223,7 +223,7 @@ Lightroom SDK 事务执行器
 工作：
 
 - 将当前 `lightroom-bridge` 标记为 `socket-experimental`，不删除，保留测试和事务业务代码作为参考。
-- 运行 `environment-doctor`，记录 Lightroom 15.0.1 产品版本族、Windows 构建、Node、当前 Adobe 离线约束、Clash 中 `hbc.adobe.io` 阻断状态和 Windows 事件日志基线。
+- 运行 `environment-doctor`，记录 Lightroom 15.0.1 产品版本族、Windows 构建、Node、当前 Adobe 离线约束、Windows hosts 与 Clash 中 `hbc.adobe.io` 双层阻断状态和 Windows 事件日志基线。
 - 建立独立测试目录、测试目录文件和一张复制的测试照片；不使用正式目录。
 - 记录所有当前未提交修改，避免覆盖用户已有工作。
 
@@ -232,7 +232,7 @@ Lightroom SDK 事务执行器
 - 未安装任何桥插件时，Lightroom 连续运行至少 30 分钟。
 - 自动切换图库/修改照片模块并确认 `Responding=True`。
 - Windows 应用日志没有新的 Lightroom 崩溃或卡死事件。
-- Adobe 网络保持离线且 `hbc.adobe.io` 阻断未改变。
+- Adobe 网络保持离线且 `hbc.adobe.io` 双层阻断未改变。
 
 ### 阶段 1：最小加载探针
 
@@ -422,7 +422,7 @@ artifacts/bridge-v2/<run-id>/
 ## 9. 明确禁止事项
 
 - 不恢复或依赖 Adobe 联网。
-- 不移除当前 `hbc.adobe.io` 稳定性阻断。
+- 不移除当前 `hbc.adobe.io` 的 Windows hosts 或 Clash 稳定性阻断。
 - 不直接编辑 `.lrcat` 数据库。
 - 不在正式照片上进行首轮写测试。
 - 不把 Mock/静态测试通过等同于 Lightroom 实机通过。
@@ -451,7 +451,7 @@ artifacts/bridge-v2/<run-id>/
 
 - Lightroom 能识别并稳定加载插件。
 - 在 Lightroom 15.0.1 产品版本族和当前 Windows/Clash 环境中，不需要 Adobe 网络或任何外部服务。
-- Adobe 网络永久离线、`hbc.adobe.io` 持续阻断时，全部受支持能力和回滚结果不变。
+- Adobe 网络永久离线、`hbc.adobe.io` 双层阻断持续生效时，全部受支持能力和回滚结果不变。
 - Lightroom 或其他关键环境版本变化时，桥会自动降级为只读而不是继续写入。
 - 七个 MCP 工具对受支持能力完成实机验收。
 - 所有写操作先预检、可回读、可回滚。

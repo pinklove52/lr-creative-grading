@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { assertCatalogCoverage } from "../src/catalog-contract.mjs";
 import { compileApplyTransaction, normalizeTransactionReference } from "../src/grade-session.mjs";
-import { makeGradeSession, PARAMETER_SPECS, TARGET } from "./fixtures.mjs";
+import { makeGradeSession, PARAMETER_SPECS, SCOPE, TARGET } from "./fixtures.mjs";
 
-test("compiles a SELECTED GradeSession-shaped 25-parameter transaction", async () => {
+test("compiles a SELECTED GradeSession-shaped Core33 transaction", async () => {
   const session = makeGradeSession();
   const request = compileApplyTransaction(session);
-  assert.equal(Object.keys(request.lr_recipe.desired_parameters).length, 25);
+  assert.equal(Object.keys(request.lr_recipe.desired_parameters).length, 33);
   assert.equal(request.target.source_digest, TARGET.source_digest);
   assert.notEqual(request.target.source_digest, TARGET.proxy_digest);
   assert.equal(request.execution_desired.compiled_parameters, null);
@@ -65,6 +65,7 @@ test("requires the exact reviewed preview strength and recipe hash", () => {
 
 test("requires explicit parameter operations; bare numbers need legacy delta opt-in", () => {
   const direct = {
+    scope: SCOPE,
     target: TARGET,
     candidate: { candidate_id: "direct", lr_recipe: { parameters: { contrast: 10 } } },
     selection: { requested_strength: 100 },
@@ -77,9 +78,10 @@ test("requires explicit parameter operations; bare numbers need legacy delta opt
   });
 });
 
-test("accepts curve_points and normalizes the compatibility value array", () => {
+test("rejects curves because they are outside Core33", () => {
   const points = [0, 0, 128, 112, 255, 255];
   const direct = {
+    scope: SCOPE,
     target: TARGET,
     candidate: {
       candidate_id: "curve",
@@ -91,9 +93,28 @@ test("accepts curve_points and normalizes the compatibility value array", () => 
     },
     selection: { requested_strength: 100 },
   };
-  const spec = compileApplyTransaction(direct).lr_recipe.desired_parameters.tone_curve_red;
-  assert.deepEqual(spec.curve_points, points);
-  assert.deepEqual(spec.value, points);
+  assert.throws(
+    () => compileApplyTransaction(direct),
+    (error) => error.code === "OUT_OF_SCOPE_PARAMETER",
+  );
+});
+
+test("Core33 rejects non-JPG targets, stale scopes, and excluded parameters", () => {
+  assert.throws(
+    () => compileApplyTransaction(makeGradeSession({ target: { format: "DNG", filename: "fixture.dng" } })),
+    (error) => error.code === "UNSUPPORTED_SOURCE_FORMAT",
+  );
+  assert.throws(
+    () => compileApplyTransaction(makeGradeSession({ scope_digest: "0".repeat(64) })),
+    (error) => error.code === "SCOPE_MISMATCH",
+  );
+  assert.throws(
+    () => compileApplyTransaction(makeGradeSession({ parameter_specs: {
+      exposure: { operation: "delta", value: 0.1, interpolation: "linear" },
+      tint: { operation: "delta", value: 1, interpolation: "linear" },
+    } })),
+    (error) => error.code === "OUT_OF_SCOPE_PARAMETER",
+  );
 });
 
 test("transaction references never reinterpret the original target baseline as current edit digest", () => {
@@ -104,4 +125,38 @@ test("transaction references never reinterpret the original target baseline as c
     transaction_id: "tx-1", target: TARGET, expected_current_edit_digest: "edit-after-mask",
   });
   assert.equal(explicit.expected_current_edit_digest, "edit-after-mask");
+});
+
+test("transaction recovery fields survive the Node normalization seam", () => {
+  const compiled = { exposure: 0.25, tone_curve: [0, 0, 255, 255] };
+  const settingsSummary = {
+    Exposure2012: { kind: "number", value: 0 },
+    ToneCurvePV2012: { kind: "table", digest: "a".repeat(64), count: 4 },
+  };
+  const reference = normalizeTransactionReference({
+    transaction_id: "tx-restart",
+    target: TARGET,
+    expected_current_edit_digest: "edit-after-apply",
+    snapshot_id: "snapshot-42",
+    snapshot_name: "CreativeGrade pre tx-restart",
+    pre_transaction_edit_digest: "edit-before-apply",
+    compiled_parameters: compiled,
+    pre_transaction_settings_summary: settingsSummary,
+  });
+  assert.deepEqual(reference, {
+    transaction_id: "tx-restart",
+    target: {
+      photo_id: TARGET.photo_id,
+      filename: TARGET.filename,
+      source_digest: TARGET.source_digest,
+      baseline_edit_digest: TARGET.baseline_edit_digest,
+      format: "JPG",
+    },
+    expected_current_edit_digest: "edit-after-apply",
+    snapshot_id: "snapshot-42",
+    snapshot_name: "CreativeGrade pre tx-restart",
+    pre_transaction_edit_digest: "edit-before-apply",
+    compiled_parameters: compiled,
+    pre_transaction_settings_summary: settingsSummary,
+  });
 });

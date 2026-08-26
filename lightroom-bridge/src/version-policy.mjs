@@ -5,3 +5,13 @@ export const ACCEPTED_LR_VERSION_PREFIX = "15.0.1";
 export function isAcceptedLrVersion(actual) {
   return typeof actual === "string" && actual.startsWith(ACCEPTED_LR_VERSION_PREFIX);
 }
+
+export function evaluateLrVersion(actual) {
+  const known = typeof actual === "string" && actual.trim() !== "";
+  return {
+    known,
+    accepted: known && isAcceptedLrVersion(actual),
+    actual: known ? actual : null,
+    reason: known ? null : "Lightroom product version could not be read",
+  };
+}

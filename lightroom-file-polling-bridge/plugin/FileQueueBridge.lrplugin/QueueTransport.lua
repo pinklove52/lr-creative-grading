@@ -41,6 +41,23 @@ local function rootDir()
     return LrPathUtils.child(LrPathUtils.getStandardFilePath("appData"), Config.queue_root_name)
 end
 
+local function ensureQueuePaths()
+    if Queue.paths.sessionFile then return end
+    local root = rootDir()
+    Queue.paths = {
+        inboxDir = LrPathUtils.child(root, "inbox"),
+        inboxNext = LrPathUtils.child(LrPathUtils.child(root, "inbox"), "next.json"),
+        processingDir = LrPathUtils.child(root, "processing"),
+        outboxDir = LrPathUtils.child(root, "outbox"),
+        failedDir = LrPathUtils.child(root, "failed"),
+        logDir = LrPathUtils.child(root, "logs"),
+        logFile = LrPathUtils.child(LrPathUtils.child(root, "logs"), "bridge.log"),
+        sessionFile = LrPathUtils.child(root, "session.json"),
+        heartbeatFile = LrPathUtils.child(root, "heartbeat.json"),
+        capabilitiesFile = LrPathUtils.child(root, "capabilities-lr15.0.1-jpg-core33.json"),
+    }
+end
+
 local function pluginVersion()
     return Config.plugin_version
 end
@@ -78,6 +95,39 @@ local function writeJsonAtomic(finalPath, value)
     local wrote, reason = writeText(finalPath .. ".tmp", encoded)
     if not wrote then return false, reason end
     return publishFile(finalPath .. ".tmp", finalPath)
+end
+
+-- session.json 中的 token 是跨 Lua 模块重载的唯一运行所有权。Reload 会创建新的
+-- Queue 模块，但旧异步闭包仍可能存活；旧循环必须在触碰单槽或心跳前确认自己仍是
+-- 当前发布者，否则自动退出，避免不同 stage/token 的桥争用同一队列。
+local function ownsPublishedSession()
+    if type(Queue.sessionToken) ~= "string" or Queue.sessionToken == "" then
+        return false, "local session token missing"
+    end
+    if not LrFileUtils.exists(Queue.paths.sessionFile) then
+        return false, "published session missing"
+    end
+    local readOk, raw = pcall(LrFileUtils.readFile, Queue.paths.sessionFile)
+    if not readOk or type(raw) ~= "string" then
+        return false, "published session unreadable"
+    end
+    local decodeOk, published = pcall(function() return Json.decode(raw) end)
+    if not decodeOk or type(published) ~= "table" then
+        return false, "published session invalid"
+    end
+    if published.token ~= Queue.sessionToken then
+        return false, "published session token changed"
+    end
+    return true, nil
+end
+
+local function retainSessionOwnership(loopName)
+    local owns, reason = ownsPublishedSession()
+    if owns then return true end
+    Queue.running = false
+    Queue.state = "superseded"
+    Queue.log("warn", "bridge_superseded", { loop = loopName, reason = reason })
+    return false
 end
 
 -- 结构化日志：一行一个 JSON，机器可解析；超过上限轮转归档。
@@ -148,21 +198,70 @@ local function scanJsonDepth(raw)
 end
 
 local function moveToFailed(sourcePath, code, message)
-    local name = sourcePath:match("[^/\\]+$") or "unknown"
-    local destination = LrPathUtils.child(Queue.paths.failedDir, name)
-    writeText(destination .. ".reason.json", Json.encode({
+    if type(sourcePath) ~= "string" or sourcePath == "" then
+        Queue.log("warn", "quarantine_skipped", { code = code, reason = "empty source path" })
+        return false
+    end
+    if not LrFileUtils.exists(sourcePath) then
+        Queue.log("warn", "quarantine_skipped", { code = code, source = sourcePath, reason = "source no longer exists" })
+        return true
+    end
+    local name = sourcePath:match("[^/\\]+$") or "unknown.json"
+    local safeCode = tostring(code or "REJECTED"):gsub("[^%w_-]", "_")
+    local uniqueName = tostring(os.time()) .. "-" .. safeCode .. "-" .. LrUUID.generateUUID() .. "-" .. name
+    local destination = LrPathUtils.child(Queue.paths.failedDir, uniqueName)
+    local moved, reason
+    local moveOk, moveResult, moveReason = pcall(LrFileUtils.move, sourcePath, destination)
+    if moveOk then
+        moved, reason = moveResult, moveReason
+    else
+        moved, reason = false, moveResult
+    end
+    if not moved then
+        -- A malformed request must never occupy the single inbox slot forever.
+        -- If quarantine cannot preserve it, delete the source as a last resort.
+        local deleteOk, deleteResult, deleteReason = pcall(LrFileUtils.delete, sourcePath)
+        local deleted = deleteOk and deleteResult ~= false and not LrFileUtils.exists(sourcePath)
+        if not deleted then
+            Queue.lastError = "could not release rejected request: " .. tostring(deleteReason or deleteResult or reason)
+            Queue.state = "quarantine_failed"
+            Queue.running = false
+            Queue.log("error", "quarantine_failed", {
+                source = sourcePath,
+                move_reason = tostring(reason),
+                delete_reason = tostring(deleteReason or deleteResult),
+                bridge_stopped = true,
+            })
+            return false
+        end
+        Queue.failedRequests = Queue.failedRequests + 1
+        Queue.log("warn", "request_discarded_after_quarantine_failure", {
+            code = code, message = message, source = sourcePath, move_reason = tostring(reason),
+        })
+        return true
+    end
+    local reasonPayload = {
         code = code,
         message = message,
         moved_at_epoch = os.time(),
-    }))
-    local moved, reason = LrFileUtils.move(sourcePath, destination)
-    if not moved then
-        Queue.lastError = "could not quarantine rejected request: " .. tostring(reason)
-        Queue.log("error", "quarantine_failed", { source = sourcePath, reason = tostring(reason) })
-        return
+        source_name = name,
+    }
+    local encodedOk, encoded = pcall(Json.encode, reasonPayload)
+    if encodedOk then
+        local wrote, writeReason = writeText(destination .. ".reason.json", encoded)
+        if not wrote then
+            Queue.log("warn", "quarantine_reason_write_failed", {
+                file = uniqueName, reason = tostring(writeReason),
+            })
+        end
+    else
+        Queue.log("warn", "quarantine_reason_encode_failed", {
+            file = uniqueName, reason = tostring(encoded),
+        })
     end
     Queue.failedRequests = Queue.failedRequests + 1
-    Queue.log("warn", "request_quarantined", { code = code, message = message, file = name })
+    Queue.log("warn", "request_quarantined", { code = code, message = message, file = uniqueName })
+    return true
 end
 
 -- 预检规则与 Node 侧 file-queue-protocol.mjs 保持一致；两侧互不信任。
@@ -352,13 +451,18 @@ local function processClaimed(request, claimPath)
 end
 
 local function pollOnce()
+    if not retainSessionOwnership("poll") then return end
     if Queue.busy then return end
     local slot = Queue.paths.inboxNext
     if not LrFileUtils.exists(slot) then return end
+    -- Node only creates the slot after reading session.json. Recheck after observing the
+    -- slot so an old loop cannot quarantine a request published for a newer token.
+    if not retainSessionOwnership("poll_claim") then return end
 
     local readOk, contents = pcall(LrFileUtils.readFile, slot)
     if not readOk or type(contents) ~= "string" then
         Queue.log("warn", "slot_read_failed", { message = tostring(contents) })
+        moveToFailed(slot, "SLOT_READ_FAILED", tostring(contents))
         return
     end
 
@@ -396,6 +500,7 @@ end
 
 local function pollLoop()
     while Queue.running do
+        if not retainSessionOwnership("poll_loop") then break end
         local ok, errorMessage = pcall(pollOnce)
         if not ok then
             Queue.log("error", "poll_failed", { message = tostring(errorMessage) })
@@ -430,6 +535,7 @@ end
 
 local function heartbeatLoop()
     while Queue.running do
+        if not retainSessionOwnership("heartbeat_loop") then break end
         local ok, errorMessage = pcall(updateHeartbeat)
         if not ok then
             Queue.lastError = "heartbeat task crashed: " .. tostring(errorMessage)
@@ -459,18 +565,7 @@ function Queue.start()
     Queue.failedRequests = 0
     Queue.lastError = nil
 
-    local root = rootDir()
-    Queue.paths = {
-        inboxDir = LrPathUtils.child(root, "inbox"),
-        inboxNext = LrPathUtils.child(LrPathUtils.child(root, "inbox"), "next.json"),
-        processingDir = LrPathUtils.child(root, "processing"),
-        outboxDir = LrPathUtils.child(root, "outbox"),
-        failedDir = LrPathUtils.child(root, "failed"),
-        logDir = LrPathUtils.child(root, "logs"),
-        logFile = LrPathUtils.child(LrPathUtils.child(root, "logs"), "bridge.log"),
-        sessionFile = LrPathUtils.child(root, "session.json"),
-        heartbeatFile = LrPathUtils.child(root, "heartbeat.json"),
-    }
+    ensureQueuePaths()
 
     local ok, errorMessage = pcall(ensureDirectories)
     if not ok then
@@ -478,6 +573,18 @@ function Queue.start()
         Queue.state = "error"
         Queue.lastError = tostring(errorMessage)
         return "directory_error"
+    end
+
+    if LrFileUtils.exists(Queue.paths.capabilitiesFile) then
+        local evidenceOk, evidenceOrReason = pcall(function()
+            return Json.decode(LrFileUtils.readFile(Queue.paths.capabilitiesFile))
+        end)
+        if evidenceOk then
+            local loaded, loadReason = Bridge.loadProbeEvidence(evidenceOrReason)
+            if not loaded then Queue.lastError = "Core33 evidence rejected: " .. tostring(loadReason) end
+        else
+            Queue.lastError = "Core33 evidence unreadable: " .. tostring(evidenceOrReason)
+        end
     end
 
     local published, publishReason = writeJsonAtomic(Queue.paths.sessionFile, {
@@ -515,10 +622,11 @@ function Queue.start()
 end
 
 function Queue.stop()
-    if not Queue.running then return "not_running" end
+    ensureQueuePaths()
+    local wasRunning = Queue.running
     Queue.running = false
     Queue.state = "stopped"
-    Queue.log("info", "bridge_stopped", {})
+    Queue.log("info", "bridge_stopped", { local_module_was_running = wasRunning })
     -- 删除会话与心跳，让 Node 立即感知桥不可用。
     pcall(function() LrFileUtils.delete(Queue.paths.sessionFile) end)
     pcall(function() LrFileUtils.delete(Queue.paths.heartbeatFile) end)

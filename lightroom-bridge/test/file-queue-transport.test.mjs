@@ -215,7 +215,7 @@ test("fault injection: invalid JSON, wrong token, duplicate id, stale TTL are qu
     };
     await fs.writeFile(next, JSON.stringify(manual), "utf8");
     await waitFor(async () => !(await fs.access(next).then(() => true).catch(() => false)));
-    assert.equal(await fs.access(path.join(outbox, "manual-1.json")).then(() => true).catch(() => false), true);
+    await waitFor(async () => fs.access(path.join(outbox, "manual-1.json")).then(() => true).catch(() => false));
     await fs.rm(path.join(outbox, "manual-1.json"), { force: true });
     await fs.writeFile(next, JSON.stringify(manual), "utf8");
     await waitFor(async () => !(await fs.access(next).then(() => true).catch(() => false)));

@@ -28,7 +28,7 @@ test("rejects unknown and strength-extrapolated out-of-range parameters atomical
   request.lr_recipe.desired_parameters.not_a_slider = {
     operation: "delta", value: 1, interpolation: "linear",
   };
-  assert.throws(() => mock.apply(request), (error) => error.code === "UNKNOWN_PARAMETER");
+  assert.throws(() => mock.apply(request), (error) => error.code === "OUT_OF_SCOPE_PARAMETER");
   assert.equal(mock.editRevision, 0);
 
   const out = compileApplyTransaction(makeGradeSession({ requested_strength: 200 }));
@@ -39,10 +39,10 @@ test("rejects unknown and strength-extrapolated out-of-range parameters atomical
   assert.equal(mock.editRevision, 0);
 });
 
-test("sends 25 settings as one preflighted transaction and reports ui_required", async () => {
+test("sends all 33 Core33 settings as one preflighted transaction and reports ui_required", async () => {
   const { mock, request } = await setup();
   const result = mock.apply(request);
-  assert.equal(Object.keys(result.applied).length, 25);
+  assert.equal(Object.keys(result.applied).length, 33);
   assert.equal(result.unsupported.length, 1);
   assert.equal(result.unsupported[0].status, "ui_required");
   assert.deepEqual(Object.keys(result.desired.compiled_parameters).sort(), Object.keys(result.applied).sort());
@@ -75,30 +75,28 @@ test("explicit rollback works only while the applied edit digest is still curren
   );
 });
 
-test("0/100/200 strength pins baseline, reaches design, and extrapolates circular hue", async () => {
+test("0/100/200 strength pins baseline, reaches design, and extrapolates Core33 controls", async () => {
   const catalog = await loadCanonicalCatalog();
   for (const [strength, expected] of [
-    [0, { contrast: 10, tint: 10, hue: 350 }],
-    [100, { contrast: 20, tint: 30, hue: 10 }],
-    [200, { contrast: 30, tint: 50, hue: 30 }],
+    [0, { contrast: 10, exposure: 1, hue: -10 }],
+    [100, { contrast: 20, exposure: 2, hue: 10 }],
+    [200, { contrast: 30, exposure: 3, hue: 30 }],
   ]) {
     const mock = new MockLightroom(TARGET, catalog);
     mock.values.contrast = 10;
-    mock.values.tint = 10;
-    mock.values.color_grade_shadow_hue = 350;
+    mock.values.exposure = 1;
+    mock.values.hue_red = -10;
     const session = makeGradeSession({
       requested_strength: strength,
       parameter_specs: {
         contrast: { operation: "delta", value: 10, interpolation: "linear" },
-        tint: { operation: "target", value: 30, interpolation: "linear" },
-        color_grade_shadow_hue: {
-          operation: "target", value: 10, interpolation: "circular_degrees",
-        },
+        exposure: { operation: "target", value: 2, interpolation: "linear" },
+        hue_red: { operation: "delta", value: 20, interpolation: "linear" },
       },
     });
     const result = mock.apply(compileApplyTransaction(session));
     assert.equal(result.desired.compiled_parameters.contrast, expected.contrast);
-    assert.equal(result.desired.compiled_parameters.tint, expected.tint);
-    assert.equal(result.desired.compiled_parameters.color_grade_shadow_hue, expected.hue);
+    assert.equal(result.desired.compiled_parameters.exposure, expected.exposure);
+    assert.equal(result.desired.compiled_parameters.hue_red, expected.hue);
   }
 });

@@ -16,6 +16,8 @@ Required fields:
 | candidates | array | Native, Amplify, and Break recipes |
 | selection | object or null | The user's single choice |
 | execution | object | Transaction, readback, protection, and verification |
+| scope_id | string | Exact runtime scope; current value is `jpg-core33-v1` |
+| scope_digest | string | SHA-256 of the Core33 scope bytes used to build the session |
 
 previews is an optional object added by render. Session IDs, timestamps, format, proxy paths, and baseline-kind labels are optional extensions rather than required core fields.
 

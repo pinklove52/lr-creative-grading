@@ -1,5 +1,11 @@
 # Lightroom parameter mapping
 
+> 当前发布范围是 `jpg-core33-v1`：仅 JPG，且只包含 Exposure、Contrast、
+> Highlights、Shadows、Whites、Blacks、Texture、Clarity、Dehaze 和八色 HSL
+> 共 33 项。下文其他映射只是后续版本研究资料，不属于当前运行时能力，也不得进入
+> 当前 GradeSession。唯一机器事实来源是
+> `lightroom-bridge/config/jpg-core33-v1.json`。
+
 The recipe uses the canonical logical names below. The bridge resolves each through its ParameterCatalog, and the current capabilities response must prove that the resolved identifier is writable in the running Lightroom build.
 
 ## Mapping rules
@@ -39,10 +45,18 @@ At strength factor s = requested_strength / 100:
 | vignette | post_crop_vignette_amount, midpoint, roundness, feather, highlight_contrast | PostCropVignetteAmount, PostCropVignetteMidpoint, PostCropVignetteRoundness, PostCropVignetteFeather, PostCropVignetteHighlightContrast |
 | grain | grain_amount, grain_size, grain_roughness | GrainAmount, GrainSize, GrainFrequency |
 
-The Lightroom controller exposes `Temperature` and `Tint` on the controller
-slider scale (`-100..100`), not in Kelvin. Recipes sent through the controller
-bridge must use that scale; Kelvin values belong to a different develop-setting
-representation and must not be passed as controller deltas.
+`Tint` currently uses the controller slider scale. `Temperature` writeback is
+temporarily disabled because tested Lightroom builds exposed incompatible
+controller and develop-setting representations. Keep Temperature available to
+the offline preview renderer, but do not include it in a live recipe until JPG
+and RAW/DNG runtime characterization establishes one consistent baseline,
+range, write, readback, and rollback representation.
+
+Release decision (2026-08-25): the user accepted the certified M3 release with
+this limitation. Temperature and Tint remain outside `jpg-core33-v1`; any live
+recipe containing either parameter must be rejected atomically. This decision
+does not count as runtime characterization and must not be reused to enable a
+future scope.
 
 White balance may be represented as absolute values by Lightroom. Use target for an authored absolute design value and delta for a baseline-relative shift. Strength interpolation must use the pinned baseline values and runtime range.
 

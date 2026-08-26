@@ -63,7 +63,7 @@ export class MockLightroom {
     const plan = [];
     for (const [key, spec] of Object.entries(request.lr_recipe.desired_parameters)) {
       if (!this.known.has(key)) {
-        throw Object.assign(new Error(`unknown: ${key}`), { code: "UNKNOWN_PARAMETER" });
+        throw Object.assign(new Error(`out of scope: ${key}`), { code: "OUT_OF_SCOPE_PARAMETER" });
       }
       const range = RANGES[key] ?? DEFAULT_RANGE;
       plan.push([key, this.compile(spec, this.values[key], range, factor, key)]);

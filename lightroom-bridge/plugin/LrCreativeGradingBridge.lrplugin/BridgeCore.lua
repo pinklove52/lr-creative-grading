@@ -2,6 +2,7 @@ local LrApplication = import "LrApplication"
 local LrApplicationView = import "LrApplicationView"
 local LrDevelopController = import "LrDevelopController"
 local LrDigest = import "LrDigest"
+local LrExportSession = import "LrExportSession"
 local LrFileUtils = import "LrFileUtils"
 local LrPathUtils = import "LrPathUtils"
 local LrTasks = import "LrTasks"
@@ -12,9 +13,9 @@ local Json = require "Json"
 
 local Bridge = {
     protocolVersion = 1,
+    coreVersion = "0.3.0-core33-probe.7",
     transactions = {},
     transactionOrder = {},
-    pendingProxy = {},
 }
 
 local function bridgeError(code, message, details)
@@ -63,6 +64,58 @@ local function sha256(value)
     local ok, digest = LrTasks.pcall(function() return LrDigest.SHA256.digest(value) end)
     if ok and type(digest) == "string" then return digest end
     bridgeError("DIGEST_UNAVAILABLE", "Lightroom SHA-256 support is unavailable", tostring(digest))
+end
+
+local function diagnosticValue(value)
+    local kind = type(value)
+    if kind == "nil" then return { kind = "missing" } end
+    if kind == "number" or kind == "string" or kind == "boolean" then
+        return { kind = kind, value = value }
+    end
+    if kind == "table" then
+        local count = 0
+        for _, _ in pairs(value) do count = count + 1 end
+        return {
+            kind = "table",
+            count = count,
+            array_length = #value,
+            digest = sha256(canonical(value)),
+        }
+    end
+    return { kind = kind, value = tostring(value) }
+end
+
+local function settingsSummary(settings)
+    local summary = {}
+    for _, key in ipairs(sortedKeys(settings)) do
+        summary[tostring(key)] = diagnosticValue(settings[key])
+    end
+    return summary
+end
+
+local function diffSettingsSummaries(expected, actual, limit)
+    expected = type(expected) == "table" and expected or {}
+    actual = type(actual) == "table" and actual or {}
+    limit = limit or 20
+    local union, seen = {}, {}
+    for key, _ in pairs(expected) do seen[key] = true end
+    for key, _ in pairs(actual) do seen[key] = true end
+    for key, _ in pairs(seen) do union[#union + 1] = key end
+    table.sort(union, function(left, right) return tostring(left) < tostring(right) end)
+    local differences, total = {}, 0
+    for _, key in ipairs(union) do
+        local left = expected[key] or { kind = "missing" }
+        local right = actual[key] or { kind = "missing" }
+        if canonical(left) ~= canonical(right) then
+            total = total + 1
+            if #differences < limit then
+                differences[#differences + 1] = {
+                    field = tostring(key), expected = left, actual = right,
+                }
+            end
+        end
+    end
+    return differences, total, total > #differences
 end
 
 local function safeMetadata(photo, key, formatted)
@@ -136,6 +189,13 @@ local function validateTargetShape(target)
     requireString(target.filename, "target.filename")
     requireString(target.source_digest, "target.source_digest")
     requireString(target.baseline_edit_digest, "target.baseline_edit_digest")
+    requireString(target.format, "target.format")
+    local format = string.upper(tostring(target.format))
+    if format ~= "JPG" and format ~= "JPEG" then
+        bridgeError("UNSUPPORTED_SOURCE_FORMAT", "Core33 only supports JPG source photos", {
+            expected = "JPG", actual = target.format,
+        })
+    end
 end
 
 local function assertTarget(expected, options)
@@ -144,6 +204,12 @@ local function assertTarget(expected, options)
     local catalog, photo = activePhoto()
     local settings = developSettings(photo)
     local actual = targetFor(photo, settings)
+    local actualFormat = string.upper(tostring(actual.format or ""))
+    if actualFormat ~= "JPG" and actualFormat ~= "JPEG" then
+        bridgeError("UNSUPPORTED_SOURCE_FORMAT", "Core33 only supports JPG source photos", {
+            expected = "JPG", actual = actual.format,
+        })
+    end
     local differences = {}
     for _, field in ipairs({ "photo_id", "filename", "source_digest" }) do
         if tostring(expected[field]) ~= tostring(actual[field]) then
@@ -217,6 +283,16 @@ local function validateCurve(curve, name)
 end
 
 local function probeParameter(entry, settings)
+    if entry.engine == "disabled" then
+        return {
+            logical_name = entry.logical,
+            lightroom_name = entry.lr,
+            engine = entry.engine,
+            kind = "number",
+            status = "unsupported",
+            reason = entry.reason or "Parameter writeback is disabled by the safety policy",
+        }
+    end
     if entry.engine == "develop_settings" then
         local value = settings and settings[entry.lr]
         return {
@@ -247,7 +323,10 @@ local function probeParameter(entry, settings)
         engine = entry.engine,
         kind = "number",
         circular = entry.circular == true,
-        status = value and "supported" or "unsupported",
+        status = value and "readable" or "unsupported",
+        read_status = value and "readable" or "unsupported",
+        write_status = entry.probeStatus,
+        tolerance = entry.tolerance,
         range = { minimum = minimum, maximum = maximum },
         value = value,
         reason = valueError,
@@ -275,13 +354,22 @@ local function capabilities()
                 kind = entry.kind or "number",
                 circular = entry.circular == true,
                 status = "unprobed",
+                read_status = "unprobed",
+                write_status = entry.probeStatus,
+                tolerance = entry.tolerance,
                 reason = "Select an image in Develop to probe its actual range.",
             }
         end
     end
     return {
         protocol_version = Bridge.protocolVersion,
-        plugin_version = "0.1.0",
+        plugin_version = Bridge.coreVersion,
+        scope = {
+            scope_id = Catalog.scopeId,
+            scope_digest = Catalog.scopeDigest,
+            source_format = Catalog.sourceFormat,
+            parameter_count = #Catalog.entries,
+        },
         lightroom = {
             version_string = LrApplication.versionString(),
             major = version.major, minor = version.minor, revision = version.revision,
@@ -295,8 +383,8 @@ local function capabilities()
             max_request_bytes = 1048576,
         },
         parameters = parameters,
-        ui_required = Catalog.uiRequired,
-        protected_not_exposed = { "crop", "masks", "heal", "red_eye", "lens_corrections", "geometry" },
+        ui_required = {},
+        protected_not_exposed = { "all_non_core33_parameters", "crop", "masks", "heal", "red_eye", "lens_corrections", "geometry" },
         transaction = {
             target_and_baseline_guard = true,
             unique_develop_snapshot = true,
@@ -344,10 +432,10 @@ local function getSettings(params)
         end
         seen[name] = true
         local entry = Catalog.resolve(name)
-        if not entry then bridgeError("UNKNOWN_PARAMETER", "Unknown Lightroom parameter: " .. name) end
+        if not entry then bridgeError("OUT_OF_SCOPE_PARAMETER", "Parameter is outside " .. Catalog.scopeId .. ": " .. name) end
         local capability = probeParameter(entry, settings)
         parameterCapabilities[entry.logical] = capability
-        if capability.status == "supported" then values[entry.logical] = capability.value end
+        if capability.read_status == "readable" then values[entry.logical] = capability.value end
     end
     return {
         target = target,
@@ -355,14 +443,6 @@ local function getSettings(params)
         parameter_capabilities = parameterCapabilities,
         baseline_edit_digest = target.baseline_edit_digest,
     }
-end
-
-local function writeBinary(path, bytes)
-    local handle, reason = io.open(path, "wb")
-    if not handle then bridgeError("PROXY_WRITE_FAILED", "Could not create JPEG proxy", tostring(reason)) end
-    local ok, writeReason = handle:write(bytes)
-    handle:close()
-    if not ok then bridgeError("PROXY_WRITE_FAILED", "Could not write JPEG proxy", tostring(writeReason)) end
 end
 
 local function getProxy(params)
@@ -378,57 +458,61 @@ local function getProxy(params)
     local _, photo = activePhoto()
     local before = targetFor(photo, developSettings(photo))
     local requestId = LrUUID.generateUUID()
-    local pending = {
-        bytes = nil,
-        last_error = nil,
-        callbacks = 0,
-        attempts = {},
-        request_references = {},
+    local proxyRoot = LrPathUtils.child(LrPathUtils.getStandardFilePath("temp"), "LrCreativeGradingBridge")
+    proxyRoot = LrPathUtils.child(proxyRoot, "proxies")
+    local proxyDir = LrPathUtils.child(proxyRoot, requestId)
+    local made, makeReason = LrFileUtils.createAllDirectories(proxyDir)
+    if not made then bridgeError("PROXY_WRITE_FAILED", "Could not create proxy directory", tostring(makeReason)) end
+
+    -- ExportSession renders Lightroom's current develop result. The cached-thumbnail
+    -- API is deliberately forbidden here because it can disagree with Develop.
+    local exportSession = LrExportSession {
+        photosToExport = { photo },
+        exportSettings = {
+            LR_collisionHandling = "overwrite",
+            LR_export_bitDepth = "8",
+            LR_export_colorSpace = "sRGB",
+            LR_export_destinationPathPrefix = proxyDir,
+            LR_export_destinationType = "specificFolder",
+            LR_export_useSubfolder = false,
+            LR_format = "JPEG",
+            LR_jpeg_quality = 1,
+            LR_minimizeEmbeddedMetadata = true,
+            LR_outputSharpeningOn = false,
+            LR_reimportExportedPhoto = false,
+            LR_renamingTokensOn = false,
+            LR_size_doConstrain = true,
+            LR_size_doNotEnlarge = true,
+            LR_size_resizeType = "longEdge",
+            LR_size_maxHeight = longEdge,
+            LR_size_maxWidth = longEdge,
+            LR_size_units = "pixels",
+            LR_useWatermark = false,
+        },
     }
-    Bridge.pendingProxy[requestId] = pending
-    local variants = {
-        { label = "square", width = longEdge, height = longEdge },
-        -- Lightroom's Windows preview cache can reject a two-dimensional request
-        -- even when a width-only request for the same photo succeeds.
-        { label = "width_only", width = longEdge },
-        { label = "smallest_available" },
-    }
-    local waited = 0
-    for _, variant in ipairs(variants) do
-        if pending.bytes or waited >= timeoutSeconds then break end
-        local attempt = { label = variant.label, callbacks = 0, error = nil }
-        pending.attempts[#pending.attempts + 1] = attempt
-        local attemptDone = false
-        local attemptClosed = false
-        local reference = photo:requestJpegThumbnail(variant.width, variant.height, function(jpegBytes, reason)
-            attempt.callbacks = attempt.callbacks + 1
-            pending.callbacks = pending.callbacks + 1
-            if attemptClosed then return end
-            if type(jpegBytes) == "string" and #jpegBytes > 0 then
-                pending.bytes = jpegBytes
-                attemptDone = true
-            elseif reason then
-                attempt.error = tostring(reason)
-                pending.last_error = attempt.error
-                attemptDone = true
-            end
-        end)
-        pending.request_references[#pending.request_references + 1] = reference
-        while not attemptDone and waited < timeoutSeconds do
-            LrTasks.sleep(0.05)
-            waited = waited + 0.05
+    local proxyPath, renderError
+    local renditionCount = 0
+    for _, rendition in exportSession:renditions() do
+        renditionCount = renditionCount + 1
+        local rendered, pathOrMessage = rendition:waitForRender()
+        if rendered then
+            proxyPath = pathOrMessage or rendition.destinationPath
+        else
+            renderError = pathOrMessage
         end
-        attemptClosed = true
     end
-    Bridge.pendingProxy[requestId] = nil
-    if not pending.bytes then
-        bridgeError("PROXY_TIMEOUT", "Lightroom did not produce a JPEG proxy before timeout", {
-            reason = pending.last_error,
-            callbacks = pending.callbacks,
-            attempts = pending.attempts,
+    if renditionCount ~= 1 or not proxyPath or not LrFileUtils.exists(proxyPath) then
+        bridgeError("PROXY_RENDER_FAILED", "Lightroom did not export the current develop result", {
+            rendition_count = renditionCount,
+            reason = tostring(renderError),
             timeout_seconds = timeoutSeconds,
         })
     end
+    local readOk, bytesOrReason = LrTasks.pcall(LrFileUtils.readFile, proxyPath)
+    if not readOk or type(bytesOrReason) ~= "string" or #bytesOrReason == 0 then
+        bridgeError("PROXY_READ_FAILED", "Could not read Lightroom's rendered JPEG proxy", tostring(bytesOrReason))
+    end
+    local proxyBytes = bytesOrReason
     local _, afterPhoto = activePhoto()
     local after = targetFor(afterPhoto, developSettings(afterPhoto))
     if before.photo_id ~= after.photo_id or before.source_digest ~= after.source_digest then
@@ -440,19 +524,13 @@ local function getProxy(params)
             after = after.baseline_edit_digest,
         })
     end
-    local proxyDir = LrPathUtils.child(LrPathUtils.getStandardFilePath("temp"), "LrCreativeGradingBridge")
-    proxyDir = LrPathUtils.child(proxyDir, "proxies")
-    local made, makeReason = LrFileUtils.createAllDirectories(proxyDir)
-    if not made then bridgeError("PROXY_WRITE_FAILED", "Could not create proxy directory", tostring(makeReason)) end
-    local proxyPath = LrPathUtils.child(proxyDir, tostring(photo.localIdentifier) .. "-" .. requestId .. ".jpg")
-    writeBinary(proxyPath, pending.bytes)
     return {
         target = {
             photo_id = after.photo_id,
             filename = after.filename,
             source_digest = after.source_digest,
             baseline_edit_digest = after.baseline_edit_digest,
-            proxy_digest = sha256(pending.bytes),
+            proxy_digest = sha256(proxyBytes),
             format = after.format,
             is_virtual_copy = after.is_virtual_copy,
             width = after.width,
@@ -460,12 +538,12 @@ local function getProxy(params)
         },
         path = proxyPath,
         mime_type = "image/jpeg",
-        byte_length = #pending.bytes,
-        proxy_digest = sha256(pending.bytes),
-        digest = sha256(pending.bytes), -- compatibility alias; never replace target.source_digest with this.
+        byte_length = #proxyBytes,
+        proxy_digest = sha256(proxyBytes),
+        digest = sha256(proxyBytes), -- compatibility alias; never replace target.source_digest with this.
         requested_long_edge = longEdge,
-        callback_count = pending.callbacks,
-        rendering = "Lightroom current-render JPEG thumbnail; asynchronous first-success result",
+        rendition_count = renditionCount,
+        rendering = "Lightroom export-session current-render JPEG",
     }
 end
 
@@ -581,6 +659,14 @@ end
 local function buildPlan(request, beforeSettings)
     if type(request) ~= "table" then bridgeError("INVALID_REQUEST", "apply request must be an object") end
     validateTargetShape(request.target)
+    if type(request.scope) ~= "table"
+        or request.scope.scope_id ~= Catalog.scopeId
+        or request.scope.scope_digest ~= Catalog.scopeDigest then
+        bridgeError("SCOPE_MISMATCH", "Request scope does not match this Core33 build", {
+            expected_scope_id = Catalog.scopeId,
+            expected_scope_digest = Catalog.scopeDigest,
+        })
+    end
     local selection = request.selection
     if type(selection) ~= "table" or not isFinite(selection.requested_strength)
         or selection.requested_strength < 0 or selection.requested_strength > 200 then
@@ -616,7 +702,12 @@ local function buildPlan(request, beforeSettings)
     local requestedByLogical = {}
     for suppliedName, spec in pairs(recipe.desired_parameters) do
         local entry = Catalog.resolve(suppliedName)
-        if not entry then bridgeError("UNKNOWN_PARAMETER", "Unknown Lightroom parameter: " .. tostring(suppliedName)) end
+        if not entry then bridgeError("OUT_OF_SCOPE_PARAMETER", "Parameter is outside " .. Catalog.scopeId .. ": " .. tostring(suppliedName)) end
+        if entry.probeStatus ~= "write_probed" then
+            bridgeError("UNPROBED_PARAMETER", "Parameter lacks current-build JPG write evidence: " .. entry.logical, {
+                parameter = entry.logical, probe_status = entry.probeStatus,
+            })
+        end
         if requestedByLogical[entry.logical] then
             bridgeError("CONFLICTING_PARAMETER", "Parameter was supplied twice through aliases: " .. entry.logical)
         end
@@ -629,7 +720,12 @@ local function buildPlan(request, beforeSettings)
         local requested = requestedByLogical[entry.logical]
         if requested then
             local desired
-            if entry.engine == "develop_settings" then
+            if entry.engine == "disabled" then
+                bridgeError("UNSUPPORTED_PARAMETER", entry.logical .. " writeback is disabled", {
+                    parameter = entry.logical,
+                    reason = entry.reason or "Runtime representation is not safely characterized",
+                })
+            elseif entry.engine == "develop_settings" then
                 local baseline = beforeSettings[entry.lr]
                 if type(baseline) ~= "table" then
                     bridgeError("UNSUPPORTED_PARAMETER", entry.logical .. " is unavailable for the active photo")
@@ -676,7 +772,14 @@ local function createSnapshot(catalog, photo, name)
     end)
     if not ok then return false, nil, tostring(reason) end
     if not created then return false, nil, "createDevelopSnapshot returned false" end
-    return true, findSnapshotId(photo, name), nil
+    for _ = 1, 20 do
+        local snapshotId = findSnapshotId(photo, name)
+        if type(snapshotId) == "string" and snapshotId ~= "" then
+            return true, snapshotId, nil
+        end
+        LrTasks.sleep(0.05)
+    end
+    return false, nil, "snapshot was created but its ID did not become visible"
 end
 
 local function targetsStillMatch(photo, expected)
@@ -730,6 +833,40 @@ local function readActual(plan, photo)
     return actual, failures
 end
 
+local function readActualSettled(plan, photo)
+    local actual, failures
+    for _ = 1, 20 do
+        actual, failures = readActual(plan, photo)
+        if #failures == 0 then return actual, failures end
+        LrTasks.sleep(0.05)
+    end
+    return actual, failures
+end
+
+local function waitForBaselineDigest(photo, expected)
+    local actual = nil
+    for _ = 1, 20 do
+        actual = baselineDigest(photo)
+        if actual == expected then return true, actual end
+        LrTasks.sleep(0.05)
+    end
+    return false, actual
+end
+
+local function waitForAppliedDigest(photo, previous, expectChange)
+    local actual = baselineDigest(photo)
+    if not expectChange or actual ~= previous then return actual end
+    for _ = 1, 40 do
+        LrTasks.sleep(0.05)
+        actual = baselineDigest(photo)
+        if actual ~= previous then return actual end
+    end
+    bridgeError("APPLIED_DIGEST_UNAVAILABLE", "Lightroom did not publish the applied edit digest within two seconds", {
+        previous = previous,
+        actual = actual,
+    })
+end
+
 local function rememberTransaction(transaction)
     Bridge.transactions[transaction.transaction_id] = transaction
     Bridge.transactionOrder[#Bridge.transactionOrder + 1] = transaction.transaction_id
@@ -749,26 +886,70 @@ local function restoreTransaction(transaction, automatic)
         end
     end
     local restored, method, reason = false, nil, nil
+    local expectedDigest = transaction.pre_transaction_edit_digest
+        or transaction.target.baseline_edit_digest
+    local actualDigest = nil
     if transaction.snapshot_id then
         local ok, result = LrTasks.pcall(function()
             catalog:withWriteAccessDo("Rollback creative grading", function()
                 photo:applyDevelopSnapshot(transaction.snapshot_id)
             end)
         end)
-        if ok then restored, method = true, "develop_snapshot" else reason = tostring(result) end
+        if ok then
+            restored, actualDigest = waitForBaselineDigest(photo, expectedDigest)
+            if restored then
+                method = "develop_snapshot"
+            else
+                reason = "snapshot returned without restoring the pre-transaction digest"
+            end
+        else
+            reason = tostring(result)
+        end
     end
     if not restored and transaction.before_settings then
         local ok, result = LrTasks.pcall(function()
             photo:applyDevelopSettings(transaction.before_settings, "Rollback creative grading", false)
         end)
-        if ok then restored, method = true, "full_develop_settings_fallback" else reason = tostring(result) end
+        if ok then
+            restored, actualDigest = waitForBaselineDigest(photo, expectedDigest)
+            if restored then
+                method = "full_develop_settings_fallback"
+            else
+                reason = "develop settings fallback did not restore the pre-transaction digest"
+            end
+        else
+            reason = tostring(result)
+        end
     end
     if not restored then
+        local differences, differenceCount, differencesTruncated = {}, 0, false
+        if transaction.pre_transaction_settings_summary then
+            local actualSummary = settingsSummary(developSettings(photo))
+            differences, differenceCount, differencesTruncated = diffSettingsSummaries(
+                transaction.pre_transaction_settings_summary,
+                actualSummary,
+                20
+            )
+        end
         transaction.failures[#transaction.failures + 1] = {
             code = "ROLLBACK_FAILED", message = reason or "No rollback method succeeded",
+            expected_digest = expectedDigest, actual_digest = actualDigest,
+            differences = differences,
+            difference_count = differenceCount,
+            differences_truncated = differencesTruncated,
+            difference_basis = transaction.pre_transaction_settings_summary
+                and "persisted_pre_transaction_summary" or "summary_unavailable",
         }
         transaction.state = "ROLLBACK_FAILED"
-        return { restored = false, state = transaction.state, reason = reason }
+        return {
+            restored = false, state = transaction.state, reason = reason,
+            expected_digest = expectedDigest, actual_digest = actualDigest,
+            differences = differences,
+            difference_count = differenceCount,
+            differences_truncated = differencesTruncated,
+            difference_basis = transaction.pre_transaction_settings_summary
+                and "persisted_pre_transaction_summary" or "summary_unavailable",
+        }
     end
     transaction.state = "ROLLED_BACK"
     transaction.rolled_back_at = os.time()
@@ -778,6 +959,9 @@ local function restoreTransaction(transaction, automatic)
         state = transaction.state,
         method = method,
         transaction_id = transaction.transaction_id,
+        expected_digest = expectedDigest,
+        actual_digest = actualDigest,
+        digest_verified = true,
         target = targetFor(photo, developSettings(photo)),
     }
 end
@@ -827,6 +1011,15 @@ local function publicTransaction(transaction, readback)
         failures = transaction.failures,
         skipped = transaction.skipped,
         unsupported = transaction.unsupported,
+        snapshot_id = transaction.snapshot_id,
+        snapshot = {
+            id = transaction.snapshot_id,
+            name = transaction.snapshot_name,
+            created = transaction.snapshot_created,
+        },
+        pre_transaction_edit_digest = transaction.pre_transaction_edit_digest,
+        applied_edit_digest = transaction.applied_edit_digest,
+        pre_transaction_settings_summary = transaction.pre_transaction_settings_summary,
     }
     if transaction.state == "READBACK_VERIFIED" then
         public.execution_patch.state = nil
@@ -862,6 +1055,8 @@ local function applyTransaction(request)
         catalog = catalog, photo = photo,
         target = target,
         before_settings = beforeSettings,
+        pre_transaction_edit_digest = target.baseline_edit_digest,
+        pre_transaction_settings_summary = settingsSummary(beforeSettings),
         snapshot_name = snapshotName,
         snapshot_id = snapshotId,
         snapshot_created = created,
@@ -989,7 +1184,7 @@ local function applyTransaction(request)
             transaction_id = transactionId, rollback = rollbackResult,
         })
     end
-    local actual, failures = readActual(plan, photo)
+    local actual, failures = readActualSettled(plan, photo)
     if #failures > 0 then
         for _, failure in ipairs(failures) do transaction.failures[#transaction.failures + 1] = failure end
         local rollbackResult = restoreTransaction(transaction, true)
@@ -1000,9 +1195,14 @@ local function applyTransaction(request)
         })
     end
     transaction.state = "APPLIED"
+    transaction.applied_edit_digest = waitForAppliedDigest(
+        photo,
+        transaction.pre_transaction_edit_digest,
+        next(transaction.applied) ~= nil
+    )
     transaction.readback = {
         values = actual,
-        baseline_edit_digest = baselineDigest(photo),
+        baseline_edit_digest = transaction.applied_edit_digest,
         verified = true,
     }
     transaction.last_known_edit_digest = transaction.readback.baseline_edit_digest
@@ -1013,7 +1213,44 @@ local function transactionFromParams(params)
     if type(params) ~= "table" then bridgeError("INVALID_REQUEST", "transaction reference must be an object") end
     local id = requireString(params.transaction_id, "transaction_id")
     local transaction = Bridge.transactions[id]
-    if not transaction then bridgeError("TRANSACTION_NOT_FOUND", "Unknown or expired transaction: " .. id) end
+    if not transaction and type(params.snapshot_id) == "string" and params.snapshot_id ~= ""
+        and type(params.target) == "table" then
+        -- Rehydrate the minimum rollback/readback journal from GradeSession.
+        -- Live catalog/photo objects are intentionally never persisted.
+        validateTargetShape(params.target)
+        local catalog, photo = activePhoto()
+        if not targetsStillMatch(photo, params.target) then
+            bridgeError("TARGET_MISMATCH", "Persisted transaction target is not the active Lightroom photo")
+        end
+        local desiredValues = type(params.compiled_parameters) == "table"
+            and params.compiled_parameters or {}
+        transaction = {
+            transaction_id = id,
+            state = "RECOVERED",
+            catalog = catalog,
+            photo = photo,
+            target = params.target,
+            before_settings = nil,
+            pre_transaction_edit_digest = params.pre_transaction_edit_digest
+                or params.target.baseline_edit_digest,
+            pre_transaction_settings_summary = params.pre_transaction_settings_summary,
+            snapshot_name = params.snapshot_name,
+            snapshot_id = params.snapshot_id,
+            snapshot_created = true,
+            plan = { desired = desiredValues },
+            desired = { compiled_parameters = desiredValues },
+            applied = {}, skipped = {}, unsupported = {}, failures = {},
+            last_known_edit_digest = params.expected_current_edit_digest,
+            history = { recovered_from_grade_session = true },
+        }
+        rememberTransaction(transaction)
+    end
+    if not transaction then
+        bridgeError("TRANSACTION_NOT_FOUND", "Unknown or expired transaction: " .. id, {
+            recovery_required = true,
+            required_fields = { "target", "snapshot_id", "pre_transaction_edit_digest" },
+        })
+    end
     if params.target then
         validateTargetShape(params.target)
         if params.target.photo_id ~= transaction.target.photo_id
@@ -1040,12 +1277,13 @@ local function readback(params)
         })
     end
     if transaction.state == "ROLLED_BACK" then return publicTransaction(transaction) end
-    local actual, failures = readActual(transaction.plan, transaction.photo)
+    local actual, failures = readActualSettled(transaction.plan, transaction.photo)
     transaction.readback = {
         values = actual,
         baseline_edit_digest = baselineDigest(transaction.photo),
         verified = #failures == 0,
     }
+    transaction.applied_edit_digest = transaction.readback.baseline_edit_digest
     if #failures > 0 then
         for _, failure in ipairs(failures) do transaction.failures[#transaction.failures + 1] = failure end
         bridgeError("READBACK_MISMATCH", "One or more Lightroom values no longer match", {
@@ -1059,6 +1297,8 @@ local function readback(params)
 end
 
 local function rollback(params)
+    -- Lightroom's snapshot APIs are documented but only take effect in Develop.
+    ensureDevelopModule()
     local transaction = transactionFromParams(params)
     if transaction.state == "ROLLED_BACK" then return publicTransaction(transaction) end
     local _, active = activePhoto()
@@ -1080,6 +1320,244 @@ local function rollback(params)
     return publicTransaction(transaction, { rollback = result })
 end
 
+local function probeCore33Jpg(params)
+    ensureDevelopModule()
+    if params.confirmation ~= "PROBE_CORE33_TEST_CHART_ONLY" then
+        bridgeError("PROBE_NOT_AUTHORIZED", "Core33 probe requires the dedicated confirmation token")
+    end
+    local catalog, photo, _, target = assertTarget(params.target)
+    if string.lower(target.filename) ~= "core33-test-chart.jpg" then
+        bridgeError("PROBE_TARGET_NOT_ALLOWED", "Core33 probe only runs on core33-test-chart.jpg", {
+            actual = target.filename,
+        })
+    end
+    local baselineSettings = developSettings(photo)
+    local baselineSummary = settingsSummary(baselineSettings)
+    local baseline = target.baseline_edit_digest
+    local baselineControllerValues = {}
+    for _, catalogEntry in ipairs(Catalog.entries) do
+        local value = controllerValue(catalogEntry)
+        baselineControllerValues[catalogEntry.logical] = value
+    end
+    local snapshotName = "Core33 probe baseline " .. LrUUID.generateUUID()
+    local created, snapshotId, snapshotReason = createSnapshot(catalog, photo, snapshotName)
+    if not created then bridgeError("SNAPSHOT_FAILED", "Could not create Core33 probe snapshot", snapshotReason) end
+
+    local function controllerBaselineMatches()
+        local mismatches = {}
+        for _, catalogEntry in ipairs(Catalog.entries) do
+            local expected = baselineControllerValues[catalogEntry.logical]
+            local actual = controllerValue(catalogEntry)
+            if expected == nil or actual == nil or math.abs(actual - expected) > catalogEntry.tolerance then
+                mismatches[#mismatches + 1] = {
+                    parameter = catalogEntry.logical, expected = expected, actual = actual,
+                }
+            end
+        end
+        return #mismatches == 0, mismatches
+    end
+
+    local function waitForBaselineState(iterations)
+        local stableCount, previousSummary = 0, nil
+        local lastMismatches = {}
+        for _ = 1, iterations do
+            local currentSettings = developSettings(photo)
+            local currentSummary = settingsSummary(currentSettings)
+            local summaryText = canonical(currentSummary)
+            local digestMatches = baselineDigest(photo, currentSettings) == baseline
+            local controllerMatches
+            controllerMatches, lastMismatches = controllerBaselineMatches()
+            if digestMatches and controllerMatches then
+                if summaryText == previousSummary then stableCount = stableCount + 1 else stableCount = 1 end
+                previousSummary = summaryText
+                if stableCount >= 3 then return true, nil end
+            else
+                stableCount, previousSummary = 0, nil
+            end
+            LrTasks.sleep(0.05)
+        end
+        return false, lastMismatches
+    end
+
+    local function refreshDevelopController()
+        local switched, reason = LrTasks.pcall(LrApplicationView.switchToModule, "library")
+        if not switched then return false, tostring(reason) end
+        for _ = 1, 40 do
+            if currentModule() == "library" then break end
+            LrTasks.sleep(0.05)
+        end
+        ensureDevelopModule()
+        return true, nil
+    end
+
+    local function restoreBaseline()
+        local ok, reason = LrTasks.pcall(function()
+            catalog:withWriteAccessDo("Restore Core33 probe baseline", function()
+                photo:applyDevelopSnapshot(snapshotId)
+            end)
+        end)
+        if not ok then return false, tostring(reason) end
+        local restored, actual = waitForBaselineDigest(photo, baseline)
+        if not restored then return false, "baseline digest did not restore: " .. tostring(actual) end
+        local stable, mismatches = waitForBaselineState(40)
+        if stable then return true, nil end
+        local refreshed, refreshReason = refreshDevelopController()
+        if not refreshed then return false, "controller refresh failed: " .. tostring(refreshReason) end
+        stable, mismatches = waitForBaselineState(60)
+        if not stable then return false, "controller did not return to baseline: " .. canonical(mismatches) end
+        return true, nil
+    end
+
+    local function waitForAppliedState(entry, expected)
+        local stableCount, previousSummary = 0, nil
+        local lastValue, lastDigest = nil, nil
+        for _ = 1, 80 do
+            lastValue = controllerValue(entry)
+            local currentSettings = developSettings(photo)
+            local currentSummary = settingsSummary(currentSettings)
+            local summaryText = canonical(currentSummary)
+            lastDigest = baselineDigest(photo, currentSettings)
+            local valueMatches = lastValue ~= nil and math.abs(lastValue - expected) <= entry.tolerance
+            if valueMatches and lastDigest ~= baseline then
+                if summaryText == previousSummary then stableCount = stableCount + 1 else stableCount = 1 end
+                previousSummary = summaryText
+                if stableCount >= 3 then return true, lastValue, currentSummary, lastDigest end
+            else
+                stableCount, previousSummary = 0, nil
+            end
+            LrTasks.sleep(0.05)
+        end
+        return false, lastValue, nil, lastDigest
+    end
+
+    local results = {}
+    for _, entry in ipairs(Catalog.entries) do
+        local record = {
+            logical_name = entry.logical,
+            lightroom_name = entry.lr,
+            tolerance = entry.tolerance,
+            status = "unsupported",
+        }
+        local minimum, maximum, rangeError = controllerRange(entry)
+        local original, valueError = controllerValue(entry)
+        record.range = minimum and { minimum = minimum, maximum = maximum } or nil
+        record.before = original
+        if minimum == nil or original == nil then
+            record.reason = rangeError or valueError or "range or value unavailable"
+        else
+            local span = maximum - minimum
+            local step = math.max(span * 0.08, entry.tolerance * 4)
+            local positive = math.min(maximum, original + step)
+            local negative = math.max(minimum, original - step)
+            if math.abs(positive - original) <= entry.tolerance then positive = math.max(minimum, original - step) end
+            if math.abs(negative - original) <= entry.tolerance then negative = math.min(maximum, original + step) end
+            local phaseError = nil
+            local readbacks = {}
+            local diffs = {}
+            for _, phase in ipairs({ { name = "positive", value = positive }, { name = "negative", value = negative } }) do
+                local writeOk, writeReason = LrTasks.pcall(LrDevelopController.setValue, entry.lr, phase.value)
+                if not writeOk then
+                    phaseError = phase.name .. " write failed: " .. tostring(writeReason)
+                    break
+                end
+                local published, readValue, appliedSummary, appliedDigest = waitForAppliedState(entry, phase.value)
+                readbacks[phase.name] = readValue
+                if not published then
+                    phaseError = phase.name .. " did not reach a stable published state: " .. tostring(appliedDigest)
+                    break
+                end
+                local difference, count, truncated = diffSettingsSummaries(
+                    baselineSummary, appliedSummary, 64
+                )
+                diffs[phase.name] = { fields = difference, count = count, truncated = truncated }
+                local restored, restoreReason = restoreBaseline()
+                if not restored then
+                    phaseError = phase.name .. " rollback failed: " .. tostring(restoreReason)
+                    break
+                end
+            end
+            if not phaseError then
+                local positiveDiff = diffs.positive
+                local negativeDiff = diffs.negative
+                local function fieldNames(diff)
+                    local names = {}
+                    for _, item in ipairs(diff.fields or {}) do names[#names + 1] = item.field end
+                    table.sort(names)
+                    return names
+                end
+                local positiveFields = fieldNames(positiveDiff)
+                local negativeFields = fieldNames(negativeDiff)
+                record.observed_develop_fields = positiveFields
+                if positiveDiff.truncated or negativeDiff.truncated then
+                    phaseError = "develop settings diff exceeded the evidence limit"
+                elseif positiveDiff.count == 0 or negativeDiff.count == 0 then
+                    phaseError = "controller changed but no develop setting field changed"
+                elseif canonical(positiveFields) ~= canonical(negativeFields) then
+                    phaseError = "positive and negative writes changed different develop setting fields"
+                end
+            end
+            local restored, restoreReason = restoreBaseline()
+            record.positive = positive
+            record.negative = negative
+            record.readbacks = readbacks
+            record.settings_differences = diffs
+            record.rollback_digest = baselineDigest(photo)
+            if not restored then
+                bridgeError("ROLLBACK_FAILED", "Core33 probe could not restore its baseline", {
+                    parameter = entry.logical, reason = restoreReason,
+                })
+            elseif phaseError then
+                record.reason = phaseError
+            else
+                record.status = "write_probed"
+                entry.probeStatus = "write_probed"
+            end
+        end
+        results[entry.logical] = record
+    end
+    local finalDigest = baselineDigest(photo)
+    if finalDigest ~= baseline then
+        bridgeError("ROLLBACK_FAILED", "Core33 probe ended with a changed baseline", {
+            expected = baseline, actual = finalDigest,
+        })
+    end
+    return {
+        plugin_version = Bridge.coreVersion,
+        scope_id = Catalog.scopeId,
+        scope_digest = Catalog.scopeDigest,
+        target = target,
+        snapshot_id = snapshotId,
+        baseline_edit_digest = baseline,
+        final_edit_digest = finalDigest,
+        parameter_count = #Catalog.entries,
+        parameters = results,
+    }
+end
+
+function Bridge.loadProbeEvidence(evidence)
+    if type(evidence) ~= "table"
+        or evidence.source ~= "live"
+        or evidence.scope_id ~= Catalog.scopeId
+        or evidence.scope_digest ~= Catalog.scopeDigest
+        or evidence.plugin_version ~= Bridge.coreVersion
+        or evidence.complete ~= true
+        or evidence.parameter_count ~= #Catalog.entries
+        or evidence.write_probed_count ~= #Catalog.entries
+        or evidence.baseline_edit_digest ~= evidence.final_edit_digest
+        or type(evidence.parameters) ~= "table" then
+        return false, "capability evidence metadata mismatch"
+    end
+    for _, entry in ipairs(Catalog.entries) do
+        local record = evidence.parameters[entry.logical]
+        if type(record) ~= "table" or record.status ~= "write_probed"
+            or record.logical_name ~= entry.logical or record.lightroom_name ~= entry.lr then
+            return false, "capability evidence missing parameter " .. entry.logical
+        end
+    end
+    for _, entry in ipairs(Catalog.entries) do entry.probeStatus = "write_probed" end
+    return true, nil
+end
+
 local handlers = {
     capabilities = capabilities,
     get_target_photo = getTargetPhoto,
@@ -1088,6 +1566,7 @@ local handlers = {
     apply_transaction = applyTransaction,
     readback = readback,
     rollback = rollback,
+    probe_core33_jpg = probeCore33Jpg,
 }
 
 function Bridge.invoke(method, params)

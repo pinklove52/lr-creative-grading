@@ -11,20 +11,20 @@ cd lightroom-bridge
 node src/environment-doctor.mjs
 ```
 
-- [ ] 输出 JSON 中 `ok: true`（硬检查：LR 可执行文件、Node 版本、队列目录可写）
-- [ ] `lr_version_whitelist` 显示 `match_mode: "prefix"`、`accepted_prefix: "15.0.1"` 且 `ok: true`（`actual` 必须以 `15.0.1` 开头；若为 null 只允许只读）
-- [ ] `clash_hbc_adobe_io_block` 找到规则文件
-- [ ] 最近 24 小时无 Lightroom 崩溃事件
+- [x] 输出 JSON 中 `ok: true`（2026-08-22 新证据链重跑通过）
+- [x] `lr_version_whitelist` 为 prefix / 15.0.1 且实际版本可读（2026-08-22）
+- [x] `clash_hbc_adobe_io_block` 找到规则文件（2026-08-22）
+- [x] 最近 24 小时无 Lightroom 崩溃事件（2026-08-22 doctor）
 
 ## 1. M1：队列传输自检（默认 stage=M1，无需改配置）
 
 ### 1.1 加载与启动
 
-- [ ] 增效工具管理器添加 `lightroom-file-polling-bridge\plugin\FileQueueBridge.lrplugin`，状态"已安装并正在运行"，无报错
-- [ ] 图库 → 增效工具额外命令 → **Start File Queue Bridge** → 对话框显示 `Bridge start: started`
+- [x] 增效工具管理器状态"已安装并正在运行"，Reload 无报错（2026-08-22）
+- [x] 图库 → 增效工具额外命令 → **Start File Queue Bridge** → `Bridge start: started / Stage: M1`（2026-08-22）
 - [ ] `%APPDATA%\Adobe\Lightroom\LrCreativeGradingBridge-v2\` 下出现 `session.json`、`heartbeat.json`、四个子目录
-- [ ] `heartbeat.json` 的 `last_updated_epoch` 每秒变化（连续观察 5 秒）
-- [ ] `logs\bridge.log` 出现 `bridge_started` 条目（JSON 格式）
+- [x] `heartbeat.json` 连续 6 个样本每秒更新（2026-08-22）
+- [x] `logs\bridge.log` 存在 JSON 启动及请求条目（2026-08-22）
 
 ### 1.2 Node 侧往返
 
@@ -35,28 +35,32 @@ echo '{}' | node src/bridge-cli.mjs capabilities
 echo '{}' | node src/bridge-cli.mjs status
 ```
 
-- [ ] `ping` 返回 `ok: true`，`lr_version` 以 `15.0.1` 开头，`stage: "M1"`
-- [ ] `capabilities` 的 `enabled_methods` 恰为 `["ping","capabilities","status"]`
-- [ ] `status` 的 `completed_requests` 随每次成功调用递增
-- [ ] 快速连跑 20 次 ping 全部成功（`for i in $(seq 1 20); do echo '{}' | node src/bridge-cli.mjs ping; done`）
+- [x] `ping` 返回 `ok: true / lr_version: 15.0.1 / stage: M1`（2026-08-22）
+- [x] `capabilities.enabled_methods` 恰为 ping/capabilities/status（2026-08-22）
+- [x] `status.completed_requests` 随成功调用递增（2026-08-22）
+- [x] 快速顺序 20 次 ping：20/20（2026-08-22）
 
 ### 1.3 门控与停止
 
-- [ ] `echo '{}' | node src/bridge-cli.mjs get_target_photo` 返回 `METHOD_DISABLED`（M1 未开放）
-- [ ] **Stop File Queue Bridge** → `session.json` 与 `heartbeat.json` 消失
-- [ ] 停止后 `ping` 返回 `PLUGIN_NOT_RUNNING`
+- [x] `get_target_photo` 返回 `METHOD_DISABLED`（2026-08-22）
+- [x] **Stop File Queue Bridge** → `session.json` 与 `heartbeat.json` 消失（2026-08-22）
+- [x] 停止后 `ping` 返回 `PLUGIN_NOT_RUNNING`，inbox/processing/outbox 无残留（2026-08-22）
 - [ ] Start → Stop 循环 5 次，均正常，`bridge.log` 无 error 条目
 
 ### 1.4 故障与恢复（M1 实机版）
 
 - [ ] 桥运行中直接退出 Lightroom → 重启 LR → Start：队列正常，无残留 `next.json`
 - [x] 桥运行中重启电脑 → Start：正常（2026-08-21：重启后桥启动成功，实机 ping 20/20，通过后安全停止；会话、心跳及在途队列均无残留）
-- [ ] 手动向 `inbox\next.json` 写入非法 JSON（如 `{`）→ 数秒内该文件出现在 `failed\` 并带 `.reason.json`（`INVALID_JSON`），心跳仍每秒更新
-- [ ] 全程 Lightroom 界面可操作、不卡顿（轮询不应阻塞 UI）
+- [x] 非法 JSON 被移至 `failed/`，reason=`INVALID_JSON`，槽位释放且心跳继续（2026-08-22）
+- [x] 全程 Lightroom 界面可操作、不卡顿（2026-08-22 只读与隔离测试）
 
 ### M1 通过标准
 
 > 全部勾选后，M1 完成。此时才允许把 `Config.lua` 的 `stage` 改为 `"M2"` 并 Reload + Stop → Start。
+>
+> 打包与认证顺序：先完成包括 Start/Stop 循环和 `restart_recovery` 在内的全部检查；
+> 重启操作结束后再次 **Start File Queue Bridge**；确认桥为运行态后执行
+> `live-evidence --observations`（该命令会实测 ping），最后运行 `verify-stages`。
 
 ## 2. M2：只读 SDK 验收（stage=M2，测试目录 + 测试照片副本）
 
@@ -74,6 +78,13 @@ echo '{}' | node src/bridge-cli.mjs status
 ## 3. M3：写事务与虚拟副本预览（stage=M3）
 
 > 全程先在**测试照片副本**上验收，确认无误后才允许对正式照片开放（单次授权 + 默认快照）。
+>
+> 2026-08-22 部分实机证据：`DSC_4458.JPG` 的 4 参数 Native 事务完成
+> “应用 → 完全退出 Lightroom → 重启并 Start → GradeSession 恢复 → 快照回滚”，
+> 应用后摘要跨重启一致，回滚摘要严格等于写前摘要。证据：
+> `grading_sessions/DSC_4458_restart_rollback_m3_final/grade_session.json`。
+> 该结果只覆盖单事务跨重启恢复，**不替代**下列 1/5/25 参数、整单拒绝、
+> 虚拟副本、中途崩溃和稳定性清单项，因此不得据此声明完整 M3。
 
 ### 3.1 单参数可逆事务
 
@@ -82,11 +93,14 @@ echo '{}' | node src/bridge-cli.mjs status
 - [ ] 快照出现在快照面板（事务前基线）
 - [ ] `rollback` → 面板恢复，`readback` 与原始基线一致
 
-### 3.2 批量事务
+### 3.2 JPG Core33 自动探测与批量事务
 
-- [ ] 5 参数事务：应用 → 回读 → 回滚，基线无漂移
-- [ ] 25 参数事务（经能力探测的参数集）：同上
-- [ ] 包含不支持参数的事务被整单拒绝（`unsupported` 明确列出，无部分应用）
+- [ ] 导入并选中 `artifacts/core33/core33-test-chart.jpg`
+- [ ] `node scripts/probe-core33-jpg.mjs` 返回 33/33 `write_probed`，最终摘要等于基线摘要
+- [ ] 6 项基本色调、3 项质感、Hue/Saturation/Luminance 各 8 项分组事务通过
+- [ ] 全 33 项安全小幅事务：应用 → 回读 → 回滚，基线无漂移
+- [ ] 混入 Tint 或其他范围外参数时返回 `OUT_OF_SCOPE_PARAMETER`，整单零写入
+- [ ] 未加载当前构建能力表时返回 `UNPROBED_PARAMETER`，整单零写入
 
 ### 3.3 虚拟副本预览闭环（最终工作流验收）
 

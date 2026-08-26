@@ -27,7 +27,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 SESSION_VERSION = "1.0.0"
 LONG_EDGE_DEFAULT = 1800
 ANALYSIS_LONG_EDGE = 1024
-PREVIEW_RENDERER_VERSION = "offline-oklab-1.1.0"
+PREVIEW_RENDERER_VERSION = "offline-oklab-1.1.1"
 STATE_ORDER = (
     "ACQUIRE",
     "ANALYZED",
@@ -40,6 +40,44 @@ STATE_ORDER = (
     "DONE",
 )
 TERMINAL_STATES = {"DONE", "ROLLED_BACK"}
+
+_CORE33_SCOPE_PATH = Path(__file__).resolve().parents[4] / "lightroom-bridge" / "config" / "jpg-core33-v1.json"
+_CORE33_SCOPE_BYTES = _CORE33_SCOPE_PATH.read_bytes()
+CORE33_SCOPE = json.loads(_CORE33_SCOPE_BYTES)
+CORE33_SCOPE_ID = str(CORE33_SCOPE["scope_id"])
+
+
+def _core33_scope_identity(scope: Mapping[str, Any]) -> dict[str, Any]:
+    """Match lightroom-bridge/src/core33-scope-digest.mjs exactly."""
+    environment = scope.get("environment", {})
+    return {
+        "scope_id": scope.get("scope_id"),
+        "environment": {
+            "os": environment.get("os"),
+            "lightroom_product_version": environment.get("lightroom_product_version"),
+            "source_formats": list(environment.get("source_formats", [])),
+        },
+        "parameters": [
+            {
+                "logical": entry.get("logical"),
+                "lr": entry.get("lr"),
+                "engine": entry.get("engine"),
+                "tolerance": entry.get("tolerance"),
+            }
+            for entry in scope.get("parameters", [])
+        ],
+    }
+
+
+CORE33_SCOPE_DIGEST = hashlib.sha256(
+    json.dumps(_core33_scope_identity(CORE33_SCOPE), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+).hexdigest()
+CORE33_PARAMETER_NAMES = frozenset(entry["logical"] for entry in CORE33_SCOPE["parameters"])
+if len(CORE33_PARAMETER_NAMES) != 33:
+    raise RuntimeError("jpg-core33-v1.json must contain exactly 33 unique logical names")
+
+_HSL_CHANNELS = ("red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta")
+_HSL_CENTERS = (0.0, 30.0, 60.0, 120.0, 180.0, 240.0, 275.0, 320.0)
 
 HARMONY_RULES: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("monochromatic", (0,)),
@@ -499,6 +537,17 @@ def _derive_creative_intent(
 ) -> dict[str, Any]:
     """Normalize free-form semantic evidence into a deterministic operator intent."""
     text = _canonical_json(hints).lower()
+    japanese_film_terms = (
+        "japanese film",
+        "japanese-film",
+        "japanese analog",
+        "japan film",
+        "日系胶片",
+        "日系写真",
+        "日系",
+        "胶片感",
+    )
+    look_profile = "japanese_film" if any(term in text for term in japanese_film_terms) else "photo_native"
     temperature = _keyword_direction(
         text,
         ("warm", "golden", "amber", "sunset", "暖", "金色", "夕阳"),
@@ -529,7 +578,9 @@ def _derive_creative_intent(
     )
     if texture_direction == 0:
         texture_direction = 1 if texture.get("strength") != "high" else 0
-    if any(term in text for term in ("duotone", "双色")):
+    if look_profile == "japanese_film":
+        break_operator = "japanese_faded_palette"
+    elif any(term in text for term in ("duotone", "双色")):
         break_operator = "duotone_palette_compression"
     elif any(term in text for term in ("low key", "low-key", "shadow swallowing", "低调", "吞黑")):
         break_operator = "low_key_cross_process"
@@ -548,6 +599,7 @@ def _derive_creative_intent(
     intent = {
         "subject_priority": str(hints.get("subject", "undetermined")),
         "protected_colors": protected_colors,
+        "look_profile": look_profile,
         "temperature_direction": temperature,
         "tone_direction": tone_direction,
         "contrast_direction": contrast_direction,
@@ -643,6 +695,8 @@ def _candidate(
     risks: list[dict[str, Any]],
     people: Mapping[str, Any],
     creative_intent: Mapping[str, Any],
+    *,
+    route_tone_direction: int | None = None,
 ) -> dict[str, Any]:
     protection_amount = {"native": 0.35, "amplify": 0.60, "break": 0.92}[candidate_id]
     return {
@@ -655,6 +709,11 @@ def _candidate(
         "operator_graph": {
             "intent_digest": creative_intent["intent_digest"],
             "creative_intent": dict(creative_intent),
+            "route_tone_direction": int(
+                creative_intent.get("tone_direction", 0)
+                if route_tone_direction is None
+                else route_tone_direction
+            ),
             "offline_nodes": [operation["op"] for operation in offline_ops],
             "lightroom_nodes": sorted(parameters),
         },
@@ -678,172 +737,351 @@ def _candidate(
     }
 
 
-def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Generate Native, Amplify, and Break as three different creative logics."""
-    harmony = photo_dna["harmony"]
-    tone = photo_dna["tone"]
-    color = photo_dna["color"]
-    texture = photo_dna["texture"]
-    people = photo_dna["protected_people"]
+def _nearest_hsl_channel(hue: float) -> str:
+    index = min(range(8), key=lambda item: abs((hue - _HSL_CENTERS[item] + 180.0) % 360.0 - 180.0))
+    return _HSL_CHANNELS[index]
+
+
+def _sparse_parameters(parameters: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Remove no-op deltas so the live request names only controls it will change."""
+    return {
+        name: dict(spec)
+        for name, spec in parameters.items()
+        if spec.get("operation") != "delta" or abs(float(spec.get("value", 0.0))) > 1e-12
+    }
+
+
+def _core33_hsl_ops(parameters: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    adjustments = {name: float(spec["value"]) for name, spec in parameters.items() if name.startswith(("hue_", "saturation_", "luminance_"))}
+    return [{"op": "hsl_mixer", "adjustments": adjustments}] if adjustments else []
+
+
+def _core33_preview_ops(parameters: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Build preview nodes only from parameters present in the Lightroom recipe."""
+    tone_names = {"exposure", "contrast", "highlights", "shadows", "whites", "blacks"}
+    texture_names = {"texture", "clarity", "dehaze"}
+    tone = {name: float(spec["value"]) for name, spec in parameters.items() if name in tone_names}
+    texture = {name: float(spec["value"]) for name, spec in parameters.items() if name in texture_names}
+    operations: list[dict[str, Any]] = []
+    if tone:
+        operations.append({"op": "core33_tone", "adjustments": tone})
+    if texture:
+        operations.append({"op": "core33_texture", "adjustments": texture})
+    operations.extend(_core33_hsl_ops(parameters))
+    represented = {
+        name
+        for operation in operations
+        for name in operation.get("adjustments", {})
+    }
+    if represented != set(parameters):
+        missing = sorted(set(parameters) - represented)
+        extra = sorted(represented - set(parameters))
+        raise ValueError(f"Core33 preview/recipe mismatch; missing={missing}, extra={extra}")
+    return operations
+
+
+def _hsl_channel_evidence(color: Mapping[str, Any]) -> dict[str, float]:
+    """Measure visible evidence for each Core33 HSL channel.
+
+    The windows match the preview mixer's 45-degree triangular falloff.  This
+    keeps a style profile from writing HSL channels that are effectively absent
+    from the analyzed proxy.
+    """
+    histogram = np.asarray(color.get("hue_histogram_360", []), dtype=np.float64)
+    if histogram.shape != (360,) or not np.all(np.isfinite(histogram)):
+        return {channel: 0.0 for channel in _HSL_CHANNELS}
+    total = float(np.sum(histogram))
+    if total <= 0.0:
+        return {channel: 0.0 for channel in _HSL_CHANNELS}
+    normalized = histogram / total
+    hues = np.arange(360, dtype=np.float64)
+    evidence: dict[str, float] = {}
+    for channel, center in zip(_HSL_CHANNELS, _HSL_CENTERS):
+        distance = np.abs((hues - center + 180.0) % 360.0 - 180.0)
+        weight = np.clip(1.0 - distance / 45.0, 0.0, 1.0)
+        evidence[channel] = round(float(np.sum(normalized * weight)), 8)
+    return evidence
+
+
+def _keep_evidenced_hsl(
+    parameters: Mapping[str, Mapping[str, Any]],
+    color: Mapping[str, Any],
+    *,
+    minimum_evidence: float = 0.006,
+) -> dict[str, dict[str, Any]]:
+    evidence = _hsl_channel_evidence(color)
+    result: dict[str, dict[str, Any]] = {}
+    for name, spec in parameters.items():
+        if name.startswith(("hue_", "saturation_", "luminance_")):
+            channel = name.split("_", 1)[1]
+            if evidence.get(channel, 0.0) < minimum_evidence:
+                continue
+        result[name] = dict(spec)
+    return _sparse_parameters(result)
+
+
+def _build_japanese_film_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Compile three photo-adaptive Japanese-film routes using Core33 only.
+
+    The current release cannot write grain, curves, Temperature, or Tint, so
+    the profile deliberately limits itself to film-like tone rolloff, lifted
+    blacks, softer presence, and evidence-backed HSL relationships.
+    """
+    tone, color = photo_dna["tone"], photo_dna["color"]
+    texture, people = photo_dna["texture"], photo_dna["protected_people"]
     semantics = photo_dna.get("semantics", {})
     guidance = semantics.get("creative_guidance", {})
-    creative_intent = semantics.get("creative_intent", {})
-    axis = float(color["cold_warm_axis"])
-    temperature_direction = int(creative_intent.get("temperature_direction", 0 if abs(axis) < 0.04 else (1 if axis > 0 else -1)))
-    contrast_direction = int(creative_intent.get("contrast_direction", 0))
-    saturation_direction = int(creative_intent.get("saturation_direction", 0))
-    texture_direction = int(creative_intent.get("texture_direction", 0))
-    tone_direction = int(creative_intent.get("tone_direction", 0))
-    dominant = int(color["dominant_hue"])
-    dynamic_range = float(tone["dynamic_range_p05_p95"])
-    native_contrast = (8.0 if dynamic_range < 0.58 else 4.0) + contrast_direction * 2.0
-    native_vibrance = 10.0 + saturation_direction * 3.0
-    native_clarity = (3.0 if texture["strength"] != "high" else 0.0) + texture_direction * 1.5
-    native_exposure = tone_direction * 0.12
-    native_offline_contrast = (0.08 if dynamic_range < 0.58 else 0.035) + contrast_direction * 0.025
-    native_offline_saturation = 0.08 + saturation_direction * 0.035
+    intent = semantics.get("creative_intent", {})
+    tone_mean = float(tone["mean"])
+    tone_p95 = float(tone["percentiles"]["p95"])
+    highlight_guard = tone_mean > 0.60 or tone_p95 > 0.82
+    exposure_lift = min(0.16, max(0.0, (0.56 - tone_mean) * 0.65)) if tone_p95 < 0.88 else 0.0
+    texture_softening = -4.0 if texture.get("strength") == "high" else -3.0
+    evidence = _hsl_channel_evidence(color)
 
+    def specs(values: Mapping[str, float]) -> dict[str, dict[str, Any]]:
+        return _keep_evidenced_hsl(
+            {name: _parameter("delta", value) for name, value in values.items()},
+            color,
+        )
+
+    native_parameters = specs({
+        "exposure": exposure_lift * 0.60,
+        "contrast": -10.0,
+        "highlights": -16.0 if highlight_guard else -8.0,
+        "shadows": 12.0,
+        "whites": -6.0 if highlight_guard else -4.0,
+        "blacks": 8.0,
+        "texture": max(-2.0, texture_softening),
+        "clarity": -4.0,
+        "dehaze": 1.5,
+        "hue_yellow": -4.0,
+        "saturation_yellow": -5.0,
+        "luminance_yellow": 4.0,
+        "hue_green": -6.0,
+        "saturation_green": -8.0,
+        "luminance_green": 6.0,
+        "saturation_aqua": -4.0,
+        "luminance_aqua": 5.0,
+        "hue_blue": -6.0,
+        "saturation_blue": -7.0,
+        "luminance_blue": 9.0,
+    })
     native = _candidate(
         "native",
-        "Native",
-        "Tidy and extend the color, tonal, and texture language already present.",
-        82.0,
+        "Japanese Air",
+        "Shape a light, soft Japanese-film palette while preserving the photographed scene.",
+        88.0,
+        _core33_preview_ops(native_parameters),
+        native_parameters,
         [
-            {"op": "oklch_harmony_nudge", "anchor_hue": harmony["anchor_hue"], "amount": 0.12},
-            {"op": "contrast", "amount": native_offline_contrast},
-            {"op": "saturation", "amount": native_offline_saturation},
-            {"op": "temperature", "amount": 0.035 * temperature_direction},
-            {"op": "exposure", "amount": 0.05 * tone_direction},
+            _risk("warning", "core33_film_emulation_limit", "Core33 approximates film tone and color without grain, white-balance controls, or a tone curve."),
+            _risk("warning", "preview_renderer_difference", "Offline Core33 preview is directional and must be read back in Lightroom."),
         ],
-        {
-            "contrast": _parameter("delta", native_contrast),
-            "vibrance": _parameter("delta", native_vibrance),
-            "clarity": _parameter("delta", native_clarity),
-            # LrDevelopController exposes Temperature as a -100..100 slider,
-            # not as a Kelvin value. Keep the recipe in controller units so
-            # the bridge can compile it against the live Lightroom range.
-            "temperature": _parameter("delta", 30.0 * temperature_direction),
-            "exposure": _parameter("delta", native_exposure),
-        },
-        [_risk("warning", "preview_renderer_difference", "Offline preview is directional and must be read back in Lightroom.")],
         people,
-        creative_intent,
+        intent,
+        route_tone_direction=0 if highlight_guard else (1 if exposure_lift > 0.0 else 0),
     )
+
+    amplify_parameters = specs({
+        "exposure": exposure_lift * 0.80,
+        "contrast": -15.0,
+        "highlights": -22.0 if highlight_guard else -12.0,
+        "shadows": 14.0,
+        "whites": -10.0 if highlight_guard else -7.0,
+        "blacks": 13.0,
+        "texture": -4.0,
+        "clarity": -8.0,
+        "dehaze": -2.0,
+        "hue_yellow": -8.0,
+        "saturation_yellow": -10.0,
+        "luminance_yellow": 8.0,
+        "hue_green": -12.0,
+        "saturation_green": -16.0,
+        "luminance_green": 10.0,
+        "hue_aqua": -4.0,
+        "saturation_aqua": -10.0,
+        "luminance_aqua": 8.0,
+        "hue_blue": -10.0,
+        "saturation_blue": -16.0,
+        "luminance_blue": 15.0,
+        "saturation_purple": -8.0,
+        "saturation_magenta": -6.0,
+        "luminance_magenta": 4.0,
+    })
     amplify = _candidate(
         "amplify",
-        "Amplify",
-        "Push the photograph's strongest temperature, contrast, hue, and material relationships.",
-        118.0,
+        "Japanese Cream",
+        "Build a warmer creamy Japanese-film rendering through muted foliage, soft cyan sky, and lifted dark tones.",
+        98.0,
+        _core33_preview_ops(amplify_parameters),
+        amplify_parameters,
         [
-            {"op": "oklch_harmony_nudge", "anchor_hue": harmony["anchor_hue"], "amount": 0.30},
-            {"op": "contrast", "amount": 0.20 + contrast_direction * 0.05},
-            {"op": "saturation", "amount": 0.24 + saturation_direction * 0.07},
-            {"op": "temperature", "amount": 0.095 * temperature_direction},
-            {"op": "local_texture", "amount": (0.14 if texture["strength"] != "high" else 0.06) + texture_direction * 0.025},
-            {"op": "exposure", "amount": 0.10 * tone_direction},
-        ],
-        {
-            "contrast": _parameter("delta", 22.0 + contrast_direction * 5.0),
-            "vibrance": _parameter("delta", 24.0 + saturation_direction * 6.0),
-            "clarity": _parameter("delta", (12.0 if texture["strength"] != "high" else 5.0) + texture_direction * 3.0),
-            "dehaze": _parameter("delta", 7.0),
-            "temperature": _parameter("delta", 60.0 * temperature_direction),
-            "exposure": _parameter("delta", 0.25 * tone_direction),
-            "color_grade_global_hue": _parameter("target", float(harmony["anchor_hue"]), "circular_degrees"),
-            "color_grade_global_saturation": _parameter("delta", 8.0),
-        },
-        [
-            _risk("warning", "gamut_pressure", "High strength can clip saturated display colors."),
-            _risk("warning", "preview_renderer_difference", "Offline preview is directional and must be read back in Lightroom."),
+            _risk("warning", "core33_film_emulation_limit", "Core33 approximates film tone and color without grain, white-balance controls, or a tone curve."),
+            _risk("warning", "preview_renderer_difference", "Offline Core33 preview is directional and must be read back in Lightroom."),
         ],
         people,
-        creative_intent,
+        intent,
+        route_tone_direction=0,
     )
 
-    break_hint = guidance.get("break", [])
-    selected_break_operator = creative_intent.get("break_operator", "triadic_channel_shift")
-    if selected_break_operator == "duotone_palette_compression":
-        break_mode = "duotone_palette_compression"
-        targets = [int((dominant + 205) % 360), int((dominant + 28) % 360)]
-        break_ops = [
-            {"op": "duotone", "shadow_hue": targets[0], "highlight_hue": targets[1], "saturation": 0.58},
-            {"op": "crush_blacks", "amount": 0.26},
-            {"op": "grain", "amount": 0.16},
-        ]
-    elif selected_break_operator == "low_key_cross_process":
-        break_mode = "low_key_cross_process"
-        targets = [int((dominant + 150) % 360), int((dominant + 315) % 360)]
-        break_ops = [
-            {"op": "channel_matrix", "matrix": [[1.08, -0.08, 0.06], [-0.07, 1.0, 0.14], [0.10, -0.05, 1.12]]},
-            {"op": "duotone", "shadow_hue": targets[0], "highlight_hue": targets[1], "saturation": 0.46},
-            {"op": "crush_blacks", "amount": 0.36},
-            {"op": "grain", "amount": 0.12},
-        ]
-    elif selected_break_operator == "hard_surface_false_color":
-        break_mode = "hard_surface_false_color"
-        targets = [int((dominant + 165) % 360), int((dominant + 280) % 360), dominant]
-        break_ops = [
-            {"op": "palette_compress", "target_hues": targets, "amount": 0.78},
-            {"op": "posterize_luma", "levels": 8, "amount": 0.34},
-            {"op": "contrast", "amount": 0.34},
-        ]
-    else:
-        break_mode = "triadic_channel_shift"
-        targets = [dominant, int((dominant + 120) % 360), int((dominant + 240) % 360)]
-        break_ops = [
-            {"op": "palette_compress", "target_hues": targets, "amount": 0.68},
-            {"op": "channel_matrix", "matrix": [[1.14, -0.06, 0.02], [0.04, 0.92, 0.10], [-0.04, 0.09, 1.08]]},
-            {"op": "crush_blacks", "amount": 0.18},
-            {"op": "grain", "amount": 0.09},
-        ]
-
+    break_parameters = specs({
+        "exposure": exposure_lift * 0.30,
+        "contrast": -18.0,
+        "highlights": -24.0 if highlight_guard else -14.0,
+        "shadows": 10.0,
+        "whites": -12.0 if highlight_guard else -9.0,
+        "blacks": 18.0,
+        "texture": 1.0,
+        "clarity": -6.0,
+        "dehaze": -2.0,
+        "hue_yellow": 10.0,
+        "saturation_yellow": -16.0,
+        "luminance_yellow": 4.0,
+        "hue_green": 16.0,
+        "saturation_green": -10.0,
+        "luminance_green": 7.0,
+        "hue_aqua": -5.0,
+        "saturation_aqua": -12.0,
+        "luminance_aqua": 10.0,
+        "hue_blue": -10.0,
+        "saturation_blue": -18.0,
+        "luminance_blue": 12.0,
+    })
     break_candidate = _candidate(
         "break",
-        "Break",
-        f"Reconstruct the image with {break_mode}; this is not a stronger Amplify.",
-        152.0,
-        break_ops,
-        {
-            "contrast": _parameter("delta", 34.0),
-            "blacks": _parameter("delta", -26.0),
-            "vibrance": _parameter("delta", 10.0),
-            "grain_amount": _parameter("delta", 24.0),
-            "color_grade_shadow_hue": _parameter("target", float(targets[0]), "circular_degrees"),
-            "color_grade_shadow_saturation": _parameter("target", 28.0),
-            "color_grade_highlight_hue": _parameter("target", float(targets[1]), "circular_degrees"),
-            "color_grade_highlight_saturation": _parameter("target", 22.0),
-            "blue_primary_hue": _parameter("delta", 18.0 if axis <= 0 else -18.0),
-        },
+        "Japanese Fade",
+        "Reconstruct the scene as a faded cyan-green Japanese negative with warm yellow accents and lifted blacks.",
+        110.0,
+        _core33_preview_ops(break_parameters),
+        break_parameters,
         [
             _risk(
                 "intentional",
                 "intentional_artifact",
-                f"{break_mode} may create deliberate color bias, dead blacks, stepping, or grain.",
+                "The faded cyan-green cast and lifted black floor are deliberate parts of this Japanese-film reconstruction.",
                 artifact={
-                    "purpose": f"Reconstruct the photograph through {break_mode} instead of conventional correction.",
+                    "purpose": "Create a visibly faded cyan-green film-negative character using only Core33 controls.",
                     "scope": "environment_global_with_person_guard" if people.get("enabled") else "global_frame",
-                    "expected_signature": "Declared cast, black compression, palette discontinuity, stepping, or grain matching the selected operator graph.",
-                    "people_impact": "Face depth, skin gradients, and texture remain protected; use one reverse mask if global protection is insufficient." if people.get("enabled") else "No protected person is declared in PhotoDNA.",
+                    "expected_signature": "Muted cyan-green environment, warm yellow accents, softer highlights, and a raised black floor.",
+                    "people_impact": "Red and orange HSL channels remain untouched; the declared person region is additionally blended toward baseline." if people.get("enabled") else "No protected person is declared in PhotoDNA.",
                 },
             ),
-            _risk("warning", "person_reverse_mask", "If a person is present, Lightroom may need one reverse-compensation mask."),
-            _risk("warning", "preview_renderer_difference", "Offline preview is directional and must be read back in Lightroom."),
+            _risk("warning", "core33_film_emulation_limit", "Core33 approximates film tone and color without grain, white-balance controls, or a tone curve."),
+            _risk("warning", "preview_renderer_difference", "Offline Core33 preview is directional and must be read back in Lightroom."),
         ],
         people,
-        creative_intent,
+        intent,
+        route_tone_direction=0,
     )
+
+    evidence_summary = {channel: evidence[channel] for channel in ("yellow", "green", "aqua", "blue", "purple", "magenta")}
     native["rationale"] = [
-        f"Detected {harmony['rule']} harmony around {harmony['anchor_hue']}°.",
+        "Use soft tone rolloff and lifted blacks instead of added punch.",
+        f"Visible HSL evidence: {evidence_summary}.",
         f"Preserve guidance: {guidance.get('preserve', [])}.",
     ]
     amplify["rationale"] = [
-        f"Amplify the source's {'neutral' if temperature_direction == 0 else 'warm' if axis > 0 else 'cool'} axis and {texture['strength']} texture.",
-        f"Amplify guidance: {guidance.get('amplify', [])}.",
+        "Warm the scene through evidenced yellow/green relationships while keeping red and orange untouched.",
+        f"Guidance: {guidance.get('amplify', [])}.",
     ]
     break_candidate["rationale"] = [
-        f"Selected {break_mode} from tone/color/texture structure.",
-        f"Break guidance: {break_hint}.",
+        "Use an independent faded cyan-green palette reconstruction, not a stronger version of Japanese Cream.",
+        f"Guidance: {guidance.get('break', [])}.",
     ]
+    return [native, amplify, break_candidate]
+
+
+def build_candidates(photo_dna: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Generate Native, Amplify, and Break using sparse Core33 recipes only."""
+    harmony, tone, color = photo_dna["harmony"], photo_dna["tone"], photo_dna["color"]
+    texture, people = photo_dna["texture"], photo_dna["protected_people"]
+    semantics = photo_dna.get("semantics", {})
+    guidance = semantics.get("creative_guidance", {})
+    intent = semantics.get("creative_intent", {})
+    if intent.get("look_profile") == "japanese_film":
+        return _build_japanese_film_candidates(photo_dna)
+    contrast_direction = int(intent.get("contrast_direction", 0))
+    saturation_direction = int(intent.get("saturation_direction", 0))
+    texture_direction = int(intent.get("texture_direction", 0))
+    tone_direction = int(intent.get("tone_direction", 0))
+    dominant = float(color["dominant_hue"])
+    primary = _nearest_hsl_channel(dominant)
+    opposite = _nearest_hsl_channel((dominant + 180.0) % 360.0)
+    tertiary = _nearest_hsl_channel((dominant + 120.0) % 360.0)
+    skin_guard = bool(people.get("enabled")) and primary in {"red", "orange"}
+    primary_sat = 3.0 + saturation_direction if skin_guard else 8.0 + saturation_direction * 2.0
+    break_operator = str(intent.get("break_operator", "triadic_channel_shift"))
+    break_shift = {
+        "duotone_palette_compression": 8.0,
+        "low_key_cross_process": -6.0,
+        "hard_surface_false_color": 14.0,
+        "triadic_channel_shift": 0.0,
+    }.get(break_operator, 0.0)
+    tone_mean = float(tone["mean"])
+    tone_p95 = float(tone["percentiles"]["p95"])
+    if tone_direction > 0:
+        native_exposure = min(0.12, max(0.0, (0.68 - tone_mean) * 0.8))
+        amplify_exposure = min(0.18, max(0.0, (0.60 - tone_mean) * 0.9))
+    elif tone_direction < 0:
+        native_exposure = -0.12
+        amplify_exposure = -0.25
+    else:
+        native_exposure = 0.0
+        amplify_exposure = 0.0
+    highlight_guard = tone_mean > 0.60 or tone_p95 > 0.82
+
+    native_parameters = {
+        "exposure": _parameter("delta", native_exposure),
+        "contrast": _parameter("delta", (8.0 if float(tone["dynamic_range_p05_p95"]) < 0.58 else 4.0) + contrast_direction * 2.0),
+        "clarity": _parameter("delta", (3.0 if texture["strength"] != "high" else 0.0) + texture_direction * 1.5),
+        f"saturation_{primary}": _parameter("delta", primary_sat),
+    }
+    native_parameters = _sparse_parameters(native_parameters)
+    native = _candidate("native", "Native", "Organize the existing tone, texture, and dominant color.", 82.0,
+        _core33_preview_ops(native_parameters),
+        native_parameters, [_risk("warning", "preview_renderer_difference", "Offline Core33 preview is directional and must be read back in Lightroom.")], people, intent)
+
+    amplify_parameters = {
+        "exposure": _parameter("delta", amplify_exposure),
+        "contrast": _parameter("delta", 22.0 + contrast_direction * 5.0),
+        "highlights": _parameter("delta", -12.0 if highlight_guard else 0.0),
+        "whites": _parameter("delta", -6.0 if highlight_guard else 0.0),
+        "texture": _parameter("delta", 10.0 + texture_direction * 3.0),
+        "clarity": _parameter("delta", (12.0 if texture["strength"] != "high" else 5.0) + texture_direction * 3.0),
+        "dehaze": _parameter("delta", 7.0),
+        f"saturation_{primary}": _parameter("delta", primary_sat * 2.2),
+        f"luminance_{primary}": _parameter("delta", 6.0),
+        f"saturation_{opposite}": _parameter("delta", -6.0),
+    }
+    amplify_parameters = _sparse_parameters(amplify_parameters)
+    amplify = _candidate("amplify", "Amplify", "Strengthen the dominant color and material contrast.", 118.0,
+        _core33_preview_ops(amplify_parameters),
+        amplify_parameters, [_risk("warning", "gamut_pressure", "Strong HSL separation can clip saturated display colors."), _risk("warning", "preview_renderer_difference", "Offline Core33 preview is directional and must be read back in Lightroom.")], people, intent,
+        route_tone_direction=0 if highlight_guard else tone_direction)
+
+    break_parameters = {
+        "contrast": _parameter("delta", 34.0), "highlights": _parameter("delta", -18.0),
+        "shadows": _parameter("delta", -12.0), "whites": _parameter("delta", 10.0),
+        "blacks": _parameter("delta", -26.0), "texture": _parameter("delta", 18.0),
+        "clarity": _parameter("delta", 16.0), "dehaze": _parameter("delta", 12.0),
+        f"hue_{primary}": _parameter("delta", 24.0 + break_shift),
+        f"saturation_{primary}": _parameter("delta", 8.0 if skin_guard else 28.0),
+        f"luminance_{primary}": _parameter("delta", -10.0),
+        f"hue_{opposite}": _parameter("delta", -22.0),
+        f"saturation_{opposite}": _parameter("delta", -18.0),
+        f"saturation_{tertiary}": _parameter("delta", 20.0 + abs(break_shift) * 0.5),
+    }
+    break_parameters = _sparse_parameters(break_parameters)
+    break_candidate = _candidate("break", "Break", "Reconstruct the image with Core33 HSL channel separation and tonal compression.", 152.0,
+        _core33_preview_ops(break_parameters),
+        break_parameters,
+        [_risk("intentional", "intentional_artifact", "Core33 reconstruction may create deliberate hue separation and dead blacks.", artifact={"purpose": "Reconstruct color relationships without out-of-scope controls.", "scope": "environment_global_with_person_guard" if people.get("enabled") else "global_frame", "expected_signature": "Declared HSL channel separation and black compression matching the Core33 recipe.", "people_impact": "Red/orange changes are constrained; use one reverse mask if required." if people.get("enabled") else "No protected person is declared in PhotoDNA."}), _risk("warning", "preview_renderer_difference", "Offline Core33 preview is directional and must be read back in Lightroom.")], people, intent,
+        route_tone_direction=-1)
+
+    native["rationale"] = [f"Detected {harmony['rule']} harmony around {harmony['anchor_hue']}°.", f"Dominant HSL channel: {primary}.", f"Preserve guidance: {guidance.get('preserve', [])}."]
+    amplify["rationale"] = [f"Amplify {primary} against {opposite} and {texture['strength']} texture.", f"Guidance: {guidance.get('amplify', [])}."]
+    break_candidate["rationale"] = [f"Rebuild {primary}/{opposite}/{tertiary} relationships using Core33 only.", f"Guidance: {guidance.get('break', [])}."]
     return [native, amplify, break_candidate]
 
 
@@ -862,11 +1100,14 @@ def create_session(
     proxy_digest = dna["source_digest"]
     session = {
         "session_version": SESSION_VERSION,
+        "scope_id": CORE33_SCOPE_ID,
+        "scope_digest": CORE33_SCOPE_DIGEST,
         "session_id": str(uuid.uuid4()),
         "revision": 0,
         "target": {
             "photo_id": photo_id,
             "filename": filename or path.name,
+            "format": Path(filename or path.name).suffix.lstrip(".").upper(),
             "source_digest": source_digest_override or proxy_digest,
             "proxy_digest": proxy_digest,
             "baseline_edit_digest": baseline_edit_digest,
@@ -916,6 +1157,38 @@ def _hue_rgb(hue: float, light: float = 0.70, chroma: float = 0.13) -> np.ndarra
 
 def _apply_op(rgb: np.ndarray, op: Mapping[str, Any], multiplier: float, seed: int) -> np.ndarray:
     name = op["op"]
+    if name == "core33_tone":
+        adjustments = op.get("adjustments", {})
+        result = np.clip(rgb, 0.0, 1.0)
+        exposure = float(adjustments.get("exposure", 0.0)) * multiplier
+        if exposure:
+            result = np.clip(result * (2.0**exposure), 0.0, 1.0)
+        contrast = float(adjustments.get("contrast", 0.0)) * multiplier / 100.0
+        if contrast:
+            result = np.clip((result - 0.5) * (1.0 + contrast) + 0.5, 0.0, 1.0)
+        luma = np.clip(np.mean(result, axis=-1), 0.0, 1.0)
+        delta = np.zeros_like(luma)
+        delta += (1.0 - luma) ** 2 * float(adjustments.get("shadows", 0.0)) * multiplier / 400.0
+        delta += luma**2 * float(adjustments.get("highlights", 0.0)) * multiplier / 400.0
+        delta += np.clip((luma - 0.70) / 0.30, 0.0, 1.0) ** 2 * float(adjustments.get("whites", 0.0)) * multiplier / 500.0
+        delta += np.clip((0.30 - luma) / 0.30, 0.0, 1.0) ** 2 * float(adjustments.get("blacks", 0.0)) * multiplier / 500.0
+        scale = np.ones_like(luma)
+        np.divide(luma + delta, luma, out=scale, where=luma > 1e-5)
+        scale = np.clip(scale, 0.0, 4.0)
+        return np.clip(result * scale[..., None], 0.0, 1.0)
+    if name == "core33_texture":
+        adjustments = op.get("adjustments", {})
+        texture = float(adjustments.get("texture", 0.0)) * multiplier / 100.0
+        clarity = float(adjustments.get("clarity", 0.0)) * multiplier / 100.0
+        dehaze = float(adjustments.get("dehaze", 0.0)) * multiplier / 100.0
+        result = np.clip(rgb, 0.0, 1.0)
+        if texture or clarity:
+            fine = result - cv2.GaussianBlur(result, (0, 0), 0.8)
+            broad = result - cv2.GaussianBlur(result, (0, 0), 2.4)
+            result = np.clip(result + fine * texture * 0.8 + broad * clarity * 0.8, 0.0, 1.0)
+        if dehaze:
+            result = np.clip((result - 0.5) * (1.0 + dehaze * 0.7) + 0.5, 0.0, 1.0)
+        return result
     if name == "oklch_harmony_nudge":
         lab = srgb_to_oklab(rgb)
         return oklab_to_srgb(_hue_attraction(lab, float(op["anchor_hue"]), float(op["amount"]) * multiplier))
@@ -938,6 +1211,27 @@ def _apply_op(rgb: np.ndarray, op: Mapping[str, Any], multiplier: float, seed: i
         amount = float(op["amount"]) * multiplier
         blurred = cv2.GaussianBlur(rgb, (0, 0), 1.4)
         return np.clip(rgb + (rgb - blurred) * amount, 0.0, 1.0)
+    if name == "hsl_mixer":
+        hsv = cv2.cvtColor(np.clip(rgb, 0.0, 1.0).astype(np.float32), cv2.COLOR_RGB2HSV)
+        # Lightroom's mixer does not assign meaningful hue to near-neutral
+        # pixels. OpenCV still returns an arbitrary hue for a nearly white
+        # JPEG sky, so using that hue directly makes HSL luminance/saturation
+        # edits carve the sky into speckled patches. Gate channel edits by
+        # saturation so neutrals stay stable while coloured material remains.
+        saturation_gate = np.clip((hsv[..., 1] - 0.035) / 0.16, 0.0, 1.0)
+        for parameter, raw_value in op.get("adjustments", {}).items():
+            family, channel = parameter.split("_", 1)
+            center = _HSL_CENTERS[_HSL_CHANNELS.index(channel)]
+            distance = np.abs((hsv[..., 0] - center + 180.0) % 360.0 - 180.0)
+            weight = np.clip(1.0 - distance / 45.0, 0.0, 1.0) * saturation_gate
+            value = float(raw_value) * multiplier
+            if family == "hue":
+                hsv[..., 0] = (hsv[..., 0] + weight * value * 0.6) % 360.0
+            elif family == "saturation":
+                hsv[..., 1] = np.clip(hsv[..., 1] * (1.0 + weight * value / 100.0), 0.0, 1.0)
+            elif family == "luminance":
+                hsv[..., 2] = np.clip(hsv[..., 2] * (1.0 + weight * value / 100.0), 0.0, 1.0)
+        return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
     if name == "duotone":
         amount = float(op["saturation"]) * multiplier
         lab = srgb_to_oklab(rgb)
@@ -1102,7 +1396,12 @@ def _preview_qc(
     op_names = {str(op["op"]) for op in candidate["offline_ops"]}
     severe_clip = out_low > base_low + 0.20 or out_high > base_high + 0.20
     if severe_clip:
-        if candidate["candidate_id"] == "break" and "crush_blacks" in op_names:
+        declared_break_blacks = candidate["candidate_id"] == "break" and any(
+            op.get("op") == "core33_tone"
+            and float(op.get("adjustments", {}).get("blacks", 0.0)) < 0.0
+            for op in candidate["offline_ops"]
+        )
+        if declared_break_blacks:
             risks.append(_risk("intentional", "preview_detected_clipping", "QC confirms the declared Break clipping artifact."))
         else:
             risks.append(_risk("unexpected", "preview_accidental_clipping", "QC found severe clipping not declared by the recipe."))
@@ -1119,14 +1418,19 @@ def _preview_qc(
         risks.append(_risk("unexpected", "preview_people_mask_empty", "A person is declared but the preview protection mask has no usable coverage; supply person boxes."))
     creative_intent = candidate.get("operator_graph", {}).get("creative_intent", {})
     break_operator = creative_intent.get("break_operator")
+    route_tone_direction = int(
+        candidate.get("operator_graph", {}).get(
+            "route_tone_direction", creative_intent.get("tone_direction", 0)
+        )
+    )
     baseline_p10 = float(np.percentile(baseline_luma, 10))
     output_p10 = float(np.percentile(output_luma, 10))
     baseline_mean = float(np.mean(baseline_luma))
     output_mean = float(np.mean(output_luma))
-    if candidate.get("candidate_id") == "break" and break_operator == "low_key_cross_process":
+    if candidate.get("candidate_id") == "break" and route_tone_direction < 0:
         if output_p10 >= baseline_p10 - 0.012 or output_mean >= baseline_mean + 0.03:
             risks.append(_risk("unexpected", "preview_intent_mismatch", "Low-key Break did not deepen shadows and preserve a darker tonal direction."))
-    elif int(creative_intent.get("tone_direction", 0)) > 0 and output_mean <= baseline_mean:
+    elif route_tone_direction > 0 and output_mean <= baseline_mean:
         risks.append(_risk("unexpected", "preview_intent_mismatch", "The authored luminous direction did not increase mean luminance."))
     return metrics, risks
 
@@ -1208,6 +1512,7 @@ def _make_contact_sheet_with_baseline(
     baseline_path: str | Path,
     results: Sequence[PreviewResult],
     output_path: Path,
+    labels: Mapping[str, str] | None = None,
 ) -> None:
     baseline_source = Image.open(baseline_path)
     opened = [ImageOps.exif_transpose(baseline_source).convert("RGB")] + [
@@ -1219,7 +1524,7 @@ def _make_contact_sheet_with_baseline(
         cards: list[Image.Image] = []
         label_height = 58
         card_specs = [("BASELINE", None, opened[0])] + [
-            (result.candidate_id.upper(), result.strength, image)
+            ((labels or {}).get(result.candidate_id, result.candidate_id).upper(), result.strength, image)
             for result, image in zip(results, opened[1:])
         ]
         for label, strength, image in card_specs:
@@ -1253,6 +1558,7 @@ def _advance_state(session: dict[str, Any], state: str) -> None:
         "APPLIED": {"PERSON_PROTECTED", "ROLLED_BACK"},
         "PERSON_PROTECTED": {"VERIFIED", "ROLLED_BACK"},
         "VERIFIED": {"DONE", "ROLLED_BACK"},
+        "DONE": {"ROLLED_BACK"},
     }
     if state == current:
         return
@@ -1308,7 +1614,12 @@ def render_session(
         results = [future.result() for future in futures]
     results.sort(key=lambda result: ("native", "amplify", "break").index(result.candidate_id))
     contact_sheet = output / f"{Path(image_path).stem}-creative-contact-sheet.jpg"
-    _make_contact_sheet_with_baseline(image_path, results, contact_sheet)
+    _make_contact_sheet_with_baseline(
+        image_path,
+        results,
+        contact_sheet,
+        {candidate["candidate_id"]: str(candidate.get("label", candidate["candidate_id"])) for candidate in session["candidates"]},
+    )
     for candidate, result in zip(session["candidates"], results):
         candidate["risks"] = [risk for risk in candidate["risks"] if risk.get("source") != "preview_qc"]
         for risk in result.detected_risks:
@@ -1399,6 +1710,7 @@ def _validate_history(history: Sequence[str]) -> None:
         ("PERSON_PROTECTED", "ROLLED_BACK"),
         ("VERIFIED", "DONE"),
         ("VERIFIED", "ROLLED_BACK"),
+        ("DONE", "ROLLED_BACK"),
     }
     for left, right in zip(history, history[1:]):
         if (left, right) not in allowed_pairs:
@@ -1413,6 +1725,8 @@ def validate_session(session: Mapping[str, Any], image_path: str | Path | None =
         raise SessionValidationError(f"GradeSession missing fields: {sorted(missing)}")
     if session["session_version"] != SESSION_VERSION:
         raise SessionValidationError(f"unsupported session_version: {session['session_version']}")
+    if session.get("scope_id") != CORE33_SCOPE_ID or session.get("scope_digest") != CORE33_SCOPE_DIGEST:
+        raise SessionValidationError("GradeSession Core33 scope id or digest does not match this build")
     if "session_id" in session and (not isinstance(session["session_id"], str) or not session["session_id"].strip()):
         raise SessionValidationError("session_id must be a non-empty string")
     if "revision" in session and (not isinstance(session["revision"], int) or session["revision"] < 0):
@@ -1421,6 +1735,8 @@ def validate_session(session: Mapping[str, Any], image_path: str | Path | None =
     for field in ("filename", "source_digest", "proxy_digest", "baseline_edit_digest", "photo_id"):
         if field not in target:
             raise SessionValidationError(f"target missing {field}")
+    if str(target.get("format", "")).upper() not in {"JPG", "JPEG"}:
+        raise SessionValidationError("UNSUPPORTED_SOURCE_FORMAT: Core33 only supports JPG source photos")
     if target["proxy_digest"] != session["photo_dna"].get("source_digest"):
         raise SessionValidationError("target proxy_digest and PhotoDNA source digest differ")
     if image_path is not None and source_digest(image_path) != target["proxy_digest"]:
@@ -1456,6 +1772,8 @@ def validate_session(session: Mapping[str, Any], image_path: str | Path | None =
         for name, spec in parameter_specs.items():
             if not isinstance(name, str) or not name or not name.replace("_", "").isalnum() or name.lower() != name:
                 raise SessionValidationError(f"non-canonical Lightroom parameter name: {name!r}")
+            if name not in CORE33_PARAMETER_NAMES:
+                raise SessionValidationError(f"OUT_OF_SCOPE_PARAMETER: {name} is outside {CORE33_SCOPE_ID}")
             if not isinstance(spec, Mapping) or spec.get("operation") not in {"delta", "target"}:
                 raise SessionValidationError(f"invalid parameter operation for {name}")
             if spec.get("interpolation", "linear") not in {"linear", "circular_degrees"}:

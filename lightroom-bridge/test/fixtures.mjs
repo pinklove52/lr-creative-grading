@@ -1,6 +1,11 @@
+import { CORE33_SCOPE, CORE33_SCOPE_DIGEST } from "../src/core33-scope.mjs";
+
+export const SCOPE = Object.freeze({ scope_id: CORE33_SCOPE.scope_id, scope_digest: CORE33_SCOPE_DIGEST });
+
 export const TARGET = Object.freeze({
   photo_id: "42",
-  filename: "fixture.dng",
+  filename: "fixture.jpg",
+  format: "JPG",
   source_digest: "source-identity-sha256",
   baseline_edit_digest: "edit-0",
   proxy_digest: "proxy-bytes-sha256",
@@ -8,31 +13,20 @@ export const TARGET = Object.freeze({
 });
 
 export const PARAMETER_SPECS = Object.freeze({
-  temperature: { operation: "delta", value: 30, interpolation: "linear" },
-  tint: { operation: "target", value: 8, interpolation: "linear" },
   exposure: { operation: "delta", value: 0.35, interpolation: "linear" },
+  contrast: { operation: "delta", value: 18, interpolation: "linear" },
   highlights: { operation: "target", value: -24, interpolation: "linear" },
   shadows: { operation: "target", value: 31, interpolation: "linear" },
-  contrast: { operation: "delta", value: 18, interpolation: "linear" },
   whites: { operation: "target", value: 14, interpolation: "linear" },
   blacks: { operation: "target", value: -19, interpolation: "linear" },
   texture: { operation: "delta", value: 12, interpolation: "linear" },
   clarity: { operation: "delta", value: 9, interpolation: "linear" },
   dehaze: { operation: "delta", value: 7, interpolation: "linear" },
-  vibrance: { operation: "delta", value: 16, interpolation: "linear" },
-  saturation: { operation: "delta", value: -3, interpolation: "linear" },
-  hue_orange: { operation: "target", value: -8, interpolation: "linear" },
-  saturation_blue: { operation: "target", value: 22, interpolation: "linear" },
-  luminance_green: { operation: "target", value: -12, interpolation: "linear" },
-  color_grade_shadow_hue: { operation: "target", value: 205, interpolation: "circular_degrees" },
-  color_grade_shadow_saturation: { operation: "target", value: 18, interpolation: "linear" },
-  color_grade_midtone_hue: { operation: "target", value: 32, interpolation: "circular_degrees" },
-  color_grade_midtone_saturation: { operation: "target", value: 11, interpolation: "linear" },
-  color_grade_highlight_hue: { operation: "target", value: 48, interpolation: "circular_degrees" },
-  color_grade_highlight_saturation: { operation: "target", value: 21, interpolation: "linear" },
-  grain_amount: { operation: "target", value: 26, interpolation: "linear" },
-  grain_size: { operation: "target", value: 31, interpolation: "linear" },
-  blue_primary_hue: { operation: "target", value: -14, interpolation: "linear" },
+  ...Object.fromEntries(["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"].flatMap((color) => [
+    [`hue_${color}`, { operation: "delta", value: 4, interpolation: "linear" }],
+    [`saturation_${color}`, { operation: "delta", value: 6, interpolation: "linear" }],
+    [`luminance_${color}`, { operation: "delta", value: -3, interpolation: "linear" }],
+  ])),
 });
 
 export function makeGradeSession(overrides = {}) {
@@ -59,6 +53,8 @@ export function makeGradeSession(overrides = {}) {
   };
   return {
     session_version: overrides.session_version ?? "1.0.0",
+    scope_id: overrides.scope_id ?? CORE33_SCOPE.scope_id,
+    scope_digest: overrides.scope_digest ?? CORE33_SCOPE_DIGEST,
     session_id: overrides.session_id ?? "session-fixture-1",
     revision: overrides.revision ?? 3,
     target: { ...TARGET, ...(overrides.target ?? {}) },

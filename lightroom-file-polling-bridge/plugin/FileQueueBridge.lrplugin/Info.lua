@@ -7,9 +7,9 @@ return {
 
     VERSION = {
         major = 0,
-        minor = 2,
+        minor = 3,
         revision = 0,
-        build = 1,
+        build = 7,
     },
 
     -- 桥由用户手动启停（Start/Stop 菜单），不在 LrInitPlugin 时自动启动，
