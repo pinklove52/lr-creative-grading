@@ -7,6 +7,8 @@ description: Compatibility refinement entry for person protection, complex Light
 
 Work inside an existing lr-creative-grading GradeSession. Do not reanalyze the photo, recommend new styles, rebuild Native/Amplify/Break candidates, or reapply the full global recipe.
 
+Resolve every referenced path from this SKILL.md directory. Preserve the session revision and use the shared atomic persistence path; never overwrite or hand-edit GradeSession JSON.
+
 ## Required state
 
 Read ../lr-creative-grading/references/session-schema.md and ../lr-creative-grading/references/risk-qc.md. For target and rollback rules, also read ../lr-creative-grading/references/bridge-protocol.md.
@@ -30,7 +32,7 @@ When photo_dna.protected_people is present:
 3. If the global recipe already protects the person, record method global_recipe and result passed.
 4. Otherwise create one inverse person-mask compensation. Correct only the damage caused by the global grade; do not neutralize the environment or turn the mask into a beauty retouch.
 5. Inspect the mask boundary once at useful zoom and correct spill or seams.
-6. Record PERSON_PROTECTED with mask identity, compensation settings, and verification evidence, then return control to lr-creative-grading for the single public readback and VERIFIED transition.
+6. Run the shared protect command with result, method, and mask identity so it atomically records PERSON_PROTECTED, then return control to lr-creative-grading for the single public readback and VERIFIED transition.
 
 Semantic person judgment comes from the model and task context as well as deterministic image evidence. Never treat OpenCV face detection as the sole authority for whether protection is required.
 

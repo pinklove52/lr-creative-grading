@@ -20,7 +20,7 @@ test("MCP core exposes exactly the seven bridge tools and forwards GradeSession 
   });
   assert.equal(response.result.isError, false);
   assert.equal(calls[0].method, "apply_transaction");
-  assert.equal(Object.keys(calls[0].params.lr_recipe.desired_parameters).length, 25);
+  assert.equal(Object.keys(calls[0].params.lr_recipe.desired_parameters).length, 33);
 });
 
 test("public MCP apply_transaction rejects a normalized/direct request that bypasses GradeSession gates", async () => {
@@ -39,6 +39,39 @@ test("public MCP apply_transaction rejects a normalized/direct request that bypa
   });
   assert.equal(response.result.isError, true);
   assert.equal(response.result.structuredContent.error.code, "FULL_SESSION_REQUIRED");
+});
+
+test("MCP rollback forwards the complete restart recovery journal", async () => {
+  const calls = [];
+  const bridge = { call: async (method, params) => { calls.push({ method, params }); return { state: "ROLLED_BACK" }; } };
+  const core = new McpCore(bridge);
+  const recovery = {
+    transaction_id: "tx-restart",
+    target: makeGradeSession().target,
+    expected_current_edit_digest: "edit-after-apply",
+    snapshot_id: "snapshot-42",
+    snapshot_name: "CreativeGrade pre tx-restart",
+    pre_transaction_edit_digest: "edit-before-apply",
+    compiled_parameters: { exposure: 0.25 },
+    pre_transaction_settings_summary: { Exposure2012: { kind: "number", value: 0 } },
+  };
+  await core.callTool("rollback", recovery);
+  assert.equal(calls[0].method, "rollback");
+  assert.deepEqual(calls[0].params, {
+    ...recovery,
+    target: {
+      photo_id: recovery.target.photo_id,
+      filename: recovery.target.filename,
+      source_digest: recovery.target.source_digest,
+      baseline_edit_digest: recovery.target.baseline_edit_digest,
+      format: "JPG",
+    },
+  });
+  const rollbackSchema = TOOL_DEFINITIONS.find((tool) => tool.name === "rollback").inputSchema;
+  for (const field of [
+    "snapshot_id", "snapshot_name", "pre_transaction_edit_digest",
+    "compiled_parameters", "pre_transaction_settings_summary",
+  ]) assert.ok(rollbackSchema.properties[field], `rollback schema is missing ${field}`);
 });
 
 test("MCP server keeps stdout pure JSON-RPC and sends no startup logs", async () => {

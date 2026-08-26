@@ -15,6 +15,8 @@ PhotoDNA combines:
 - texture and material cues;
 - person regions and protection constraints supplied by model/context judgment plus deterministic image evidence.
 
+Normalize semantic evidence into creative_intent before candidate construction. Persist subject_priority, protected_colors, temperature, tone, contrast, saturation, texture directions, break_operator, and intent_digest. Persist an operator_graph per candidate that names the shared intent, offline nodes, and Lightroom nodes. Semantic evidence must alter the graph or recipe when it changes the authored direction; do not use it only as rationale prose.
+
 The orchestrating model must pass JSON semantic hints for subject, scene, mood, lighting, and materials through analyze --semantic-hints. It passes model/context person judgment separately through --protected-people or --people-boxes so the analyzer writes it into photo_dna.protected_people before candidates are compiled. OpenCV or any other face detector may contribute boxes, but it is never the sole authority: profiles, occlusion, small figures, bodies without visible faces, and contextual evidence still require protection.
 
 Smooth the circular hue histogram, protect near-neutrals from unstable hue assignment, and evaluate every anchor from 0 through 359 degrees against these nine harmony families:

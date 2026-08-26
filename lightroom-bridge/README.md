@@ -38,13 +38,29 @@ MCP工具固定为：
 
 ```text
 session_version = 1.0.0
+session_id存在且revision有效
+target.live_applicable = true
 execution.state = SELECTED
 execution.state_history = ACQUIRE→ANALYZED→PREVIEWED→SELECTED
 selected candidate has no unexpected risk
+selected strength / recipe_hash严格等于已审阅预览，且预览包含SHA-256文件摘要
 execution.desired matches candidate_id / strength / parameter_specs
 ```
 
 返回值包含 `transaction_id / desired / applied / readback / skipped / unsupported / failures`，并提供 `execution_patch`。应用成功时追加 `SNAPSHOTTED, APPLIED`；桥接回读只设置 `readback_verified=true`，不会越过人物保护步骤冒充 `VERIFIED`。编排器必须先写入 `PERSON_PROTECTED`（无人像时为 `not_required`），再推进会话状态。
+
+应用后若执行了人物保护或局部补偿，统一 CLI 会重新获取当前照片，复核 `photo_id / filename / source_digest`，并把新的编辑摘要记录为 `person_protection.post_edit_digest`。最终回读以该摘要作为 `expected_current_edit_digest`；任何未记录的后续 Lightroom 改动都会被拒绝。
+
+## 统一编排入口
+
+从仓库根目录运行：
+
+```powershell
+python .\.agents\skills\lr-creative-grading\scripts\creative_grade.py doctor --live
+python .\.agents\skills\lr-creative-grading\scripts\creative_grade.py acquire-live --workspace C:\path\to\new-session
+```
+
+后续使用同一入口的 `analyze / render / select / apply / protect / protect-not-required / verify / done / rollback` 子命令推进状态；不要手改 `GradeSession`，也不要使用临时桥接脚本。旧会话先运行 `migrate <session-path>`，迁移器只保留有精确预览证据的选择。
 
 ### 摘要字段不能混用
 

@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -14,6 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from creative_engine import (  # noqa: E402
+    CORE33_SCOPE_DIGEST,
     SessionValidationError,
     analyze_photo,
     build_candidates,
@@ -24,9 +26,13 @@ from creative_engine import (  # noqa: E402
     recipe_hash,
     render_candidate,
     render_session,
+    load_session,
+    migrate_preview_contract,
+    save_session,
     select_candidate,
     validate_session,
 )
+import creative_grade  # noqa: E402
 
 
 def _synthetic_rgb(width: int = 128, height: int = 96) -> np.ndarray:
@@ -57,6 +63,12 @@ def _peaked_histogram(peaks: list[int], width: float = 4.0) -> np.ndarray:
 
 
 class HarmonyTests(unittest.TestCase):
+    def test_python_scope_digest_matches_node_and_lua_contract(self) -> None:
+        self.assertEqual(
+            "d1542ea82da680d2405c7b0d376e02099a6fb8c9b0f55ec8969c8ca8e3d32c01",
+            CORE33_SCOPE_DIGEST,
+        )
+
     def test_nine_rule_search_recognizes_synthetic_structures(self) -> None:
         cases = {
             "monochromatic": [17],
@@ -80,7 +92,7 @@ class PhotoDNATests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.image = self.root / "proxy.png"
+        self.image = self.root / "proxy.jpg"
         _save_rgb(self.image, _synthetic_rgb())
 
     def tearDown(self) -> None:
@@ -126,12 +138,72 @@ class PhotoDNATests(unittest.TestCase):
         second = create_session(self.image, semantic_hints=hints)
         self.assertEqual(first["photo_dna"]["semantics"], second["photo_dna"]["semantics"])
         self.assertEqual(first["candidates"][2]["rationale"], second["candidates"][2]["rationale"])
-        self.assertIn("duotone_palette_compression", first["candidates"][2]["logic"])
+        self.assertIn("Core33 HSL", first["candidates"][2]["logic"])
         self.assertIn("green fog cast", json.dumps(first["candidates"][0]["rationale"]))
 
+    def test_conflicting_semantics_change_operator_graph_and_recipes(self) -> None:
+        warm = create_session(
+            self.image,
+            semantic_hints={
+                "subject": "child portrait",
+                "lighting": "golden warm backlight",
+                "mood": "luminous joyful",
+                "materials": ["soft skin"],
+                "preserve": ["warm skin"],
+                "amplify": ["golden rim light"],
+                "break": ["duotone"],
+            },
+        )
+        cold = create_session(
+            self.image,
+            semantic_hints={
+                "subject": "steel bridge",
+                "lighting": "cold cyan storm light",
+                "mood": "dark ominous",
+                "materials": ["rough metal"],
+                "preserve": ["cold steel"],
+                "amplify": ["cyan silhouette"],
+                "break": ["low-key shadow swallowing"],
+            },
+        )
+        for index in (0, 1, 2):
+            self.assertNotEqual(warm["candidates"][index]["operator_graph"], cold["candidates"][index]["operator_graph"])
+            self.assertNotEqual(warm["candidates"][index]["lr_recipe"], cold["candidates"][index]["lr_recipe"])
+
+    def test_japanese_film_is_a_real_look_profile_not_rationale_only(self) -> None:
+        japanese = create_session(
+            self.image,
+            semantic_hints={
+                "subject": "lakeside city landscape",
+                "mood": "日系胶片感，柔和清透，轻微褪色",
+                "lighting": "bright soft daylight",
+                "materials": ["sky", "green meadow", "water"],
+                "preserve": ["people", "warm flower accents"],
+                "amplify": ["Japanese cream film palette"],
+                "break": ["faded cyan-green Japanese film negative"],
+            },
+        )
+        ordinary = create_session(
+            self.image,
+            semantic_hints={
+                "subject": "lakeside city landscape",
+                "mood": "ordinary documentary color",
+                "lighting": "bright soft daylight",
+                "materials": ["sky", "green meadow", "water"],
+            },
+        )
+        self.assertEqual("japanese_film", japanese["photo_dna"]["semantics"]["creative_intent"]["look_profile"])
+        self.assertEqual("photo_native", ordinary["photo_dna"]["semantics"]["creative_intent"]["look_profile"])
+        for index in (0, 1, 2):
+            self.assertNotEqual(
+                japanese["candidates"][index]["lr_recipe"]["parameters"],
+                ordinary["candidates"][index]["lr_recipe"]["parameters"],
+            )
+
     def test_live_target_filename_can_be_preserved_when_proxy_is_temporary(self) -> None:
-        session = create_session(self.image, filename="IMG_0001.CR3")
-        self.assertEqual("IMG_0001.CR3", session["target"]["filename"])
+        session = create_session(self.image, filename="IMG_0001.JPG")
+        self.assertEqual("IMG_0001.JPG", session["target"]["filename"])
+        self.assertEqual("JPG", session["target"]["format"])
         self.assertEqual(self.image.name, session["photo_dna"]["proxy"]["filename"])
 
 
@@ -139,7 +211,7 @@ class CandidateAndPreviewTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.image = self.root / "proxy.png"
+        self.image = self.root / "proxy.jpg"
         self.rgb = _synthetic_rgb()
         _save_rgb(self.image, self.rgb)
 
@@ -150,8 +222,8 @@ class CandidateAndPreviewTests(unittest.TestCase):
         dna = analyze_photo(self.image)
         candidates = build_candidates(dna)
         self.assertEqual(["native", "amplify", "break"], [item["candidate_id"] for item in candidates])
-        op_signatures = [tuple(op["op"] for op in item["offline_ops"]) for item in candidates]
-        self.assertEqual(3, len(set(op_signatures)))
+        recipe_signatures = [json.dumps(item["lr_recipe"]["parameters"], sort_keys=True) for item in candidates]
+        self.assertEqual(3, len(set(recipe_signatures)))
         rendered = [render_candidate(self.rgb, item, dna, item["intensity"]["default"], 123) for item in candidates]
         distances = [float(np.mean(np.abs(rendered[a] - rendered[b]))) for a, b in ((0, 1), (0, 2), (1, 2))]
         self.assertTrue(all(distance > 0.015 for distance in distances), distances)
@@ -162,6 +234,19 @@ class CandidateAndPreviewTests(unittest.TestCase):
             set(intentional["artifact"]),
         )
 
+    def test_preview_nodes_are_mechanically_derived_from_exact_core33_recipe(self) -> None:
+        session = create_session(self.image)
+        allowed_nodes = {"core33_tone", "core33_texture", "hsl_mixer"}
+        for candidate in session["candidates"]:
+            parameters = candidate["lr_recipe"]["parameters"]
+            represented = {
+                name
+                for operation in candidate["offline_ops"]
+                for name in operation.get("adjustments", {})
+            }
+            self.assertEqual(set(parameters), represented)
+            self.assertTrue({operation["op"] for operation in candidate["offline_ops"]} <= allowed_nodes)
+
     def test_zero_percent_is_baseline_and_over_100_extrapolates(self) -> None:
         dna = analyze_photo(self.image)
         candidate = build_candidates(dna)[1]
@@ -170,6 +255,112 @@ class CandidateAndPreviewTests(unittest.TestCase):
         extreme = render_candidate(self.rgb, candidate, dna, 180.0, 7)
         self.assertLess(float(np.max(np.abs(zero - self.rgb))), 2e-5)
         self.assertGreater(float(np.mean(np.abs(extreme - self.rgb))), float(np.mean(np.abs(hundred - self.rgb))))
+
+    def test_candidates_never_emit_zero_delta_parameters(self) -> None:
+        dna = analyze_photo(self.image, semantic_hints={
+            "subject": "neutral test chart",
+            "scene": "controlled chart",
+            "mood": "diagnostic",
+            "lighting": "even",
+            "materials": "digital color patches",
+        })
+        for candidate in build_candidates(dna):
+            parameters = candidate["lr_recipe"]["parameters"]
+            self.assertTrue(parameters)
+            for name, spec in parameters.items():
+                if spec["operation"] == "delta":
+                    self.assertNotEqual(float(spec["value"]), 0.0, (candidate["candidate_id"], name))
+            represented = {
+                name
+                for operation in candidate["offline_ops"]
+                for name in operation.get("adjustments", {})
+            }
+            self.assertEqual(set(parameters), represented)
+
+    def test_bright_scene_amplify_uses_highlight_guard_instead_of_positive_exposure(self) -> None:
+        bright = self.root / "bright.jpg"
+        rgb = np.full((96, 128, 3), 0.76, dtype=np.float32)
+        rgb[60:, :, :] = [0.24, 0.42, 0.28]
+        _save_rgb(bright, rgb)
+        dna = analyze_photo(bright, semantic_hints={
+            "subject": "bright airy city landscape",
+            "scene": "hazy skyline and meadow",
+            "mood": "open and airy",
+            "lighting": "bright soft daylight",
+            "materials": "sky foliage glass",
+        })
+        amplify = build_candidates(dna)[1]
+        parameters = amplify["lr_recipe"]["parameters"]
+        self.assertNotIn("exposure", parameters)
+        self.assertLess(parameters["highlights"]["value"], 0.0)
+        self.assertLess(parameters["whites"]["value"], 0.0)
+        self.assertEqual(0, amplify["operator_graph"]["route_tone_direction"])
+
+    def test_bright_japanese_film_routes_are_soft_distinct_and_people_safe(self) -> None:
+        bright = self.root / "bright-japanese.jpg"
+        rgb = np.full((96, 128, 3), [0.58, 0.76, 0.88], dtype=np.float32)
+        rgb[55:, :, :] = [0.28, 0.52, 0.30]
+        rgb[70:82, 45:78, :] = [0.82, 0.46, 0.30]
+        _save_rgb(bright, rgb)
+        session = create_session(
+            bright,
+            protected_people=[{"x": 45 / 128, "y": 70 / 96, "width": 33 / 128, "height": 12 / 96}],
+            semantic_hints={
+                "subject": "bright Japanese park landscape",
+                "mood": "日系胶片感，柔和清透，低反差，轻微褪色",
+                "lighting": "bright soft daylight",
+                "materials": ["blue sky", "green meadow"],
+                "preserve": ["credible people", "warm flowers"],
+                "amplify": ["warm Japanese cream film"],
+                "break": ["faded cyan-green Japanese film negative"],
+            },
+        )
+        candidates = session["candidates"]
+        self.assertEqual(["Japanese Air", "Japanese Cream", "Japanese Fade"], [item["label"] for item in candidates])
+        signatures = {json.dumps(item["lr_recipe"]["parameters"], sort_keys=True) for item in candidates}
+        self.assertEqual(3, len(signatures))
+        for candidate in candidates:
+            parameters = candidate["lr_recipe"]["parameters"]
+            self.assertTrue(set(parameters) <= set(__import__("creative_engine").CORE33_PARAMETER_NAMES))
+            self.assertNotIn("exposure", parameters)
+            self.assertLess(parameters["contrast"]["value"], 0.0)
+            self.assertLess(parameters["highlights"]["value"], 0.0)
+            self.assertGreater(parameters["shadows"]["value"], 0.0)
+            self.assertGreater(parameters["blacks"]["value"], 0.0)
+            self.assertLess(parameters["clarity"]["value"], 0.0)
+            self.assertFalse(any(name.endswith(("_red", "_orange")) for name in parameters))
+            represented = {
+                name
+                for operation in candidate["offline_ops"]
+                for name in operation.get("adjustments", {})
+            }
+            self.assertEqual(set(parameters), represented)
+        self.assertLess(candidates[0]["lr_recipe"]["parameters"]["texture"]["value"], 0.0)
+        self.assertGreater(candidates[0]["lr_recipe"]["parameters"]["dehaze"]["value"], 0.0)
+        self.assertLess(candidates[1]["lr_recipe"]["parameters"]["texture"]["value"], 0.0)
+        self.assertLess(candidates[1]["lr_recipe"]["parameters"]["dehaze"]["value"], 0.0)
+        self.assertLessEqual(abs(candidates[2]["lr_recipe"]["parameters"]["texture"]["value"]), 2.0)
+        self.assertLess(candidates[2]["lr_recipe"]["parameters"]["dehaze"]["value"], 0.0)
+        self.assertLess(candidates[1]["lr_recipe"]["parameters"]["hue_green"]["value"], 0.0)
+        self.assertGreater(candidates[2]["lr_recipe"]["parameters"]["hue_green"]["value"], 0.0)
+        rendered = [
+            render_candidate(rgb, candidate, session["photo_dna"], candidate["design_strength"], 91)
+            for candidate in candidates
+        ]
+        for left, right in ((0, 1), (0, 2), (1, 2)):
+            self.assertGreater(float(np.mean(np.abs(rendered[left] - rendered[right]))), 0.004)
+
+    def test_break_records_its_own_dark_tonal_direction(self) -> None:
+        dna = analyze_photo(self.image, semantic_hints={
+            "subject": "airy landscape",
+            "scene": "bright city park",
+            "mood": "luminous",
+            "lighting": "bright daylight",
+            "materials": "sky and foliage",
+        })
+        candidates = build_candidates(dna)
+        self.assertGreater(candidates[0]["operator_graph"]["route_tone_direction"], 0)
+        self.assertLess(candidates[2]["operator_graph"]["route_tone_direction"], 0)
 
     def test_render_cache_hits_and_keys_are_deterministic(self) -> None:
         session = create_session(self.image)
@@ -180,6 +371,26 @@ class CandidateAndPreviewTests(unittest.TestCase):
         second = render_session(session, self.image, output, long_edge=512)
         self.assertTrue(all(second[key]["cache_hit"] for key in ("native", "amplify", "break")))
         self.assertEqual(first["native"]["cache_key"], second["native"]["cache_key"])
+        with Image.open(first["contact_sheet"]) as sheet, Image.open(first["native"]["path"]) as preview:
+            self.assertGreater(sheet.width, preview.width * 3)
+            expected_card_width = round(preview.width * min(720, preview.height) / preview.height)
+            self.assertLess(abs(sheet.width - expected_card_width * 4 - 8 * 3), 8)
+
+    def test_selection_requires_exact_reviewed_strength_and_hash(self) -> None:
+        session = create_session(self.image)
+        render_session(session, self.image, self.root / "reviewed", long_edge=512)
+        with self.assertRaisesRegex(SessionValidationError, "not previewed"):
+            select_candidate(session, "native", 100)
+        session["previews"]["native"]["recipe_hash"] = "wrong"
+        with self.assertRaisesRegex(SessionValidationError, "recipe_hash"):
+            select_candidate(session, "native")
+
+    def test_selection_rejects_state_without_preview_artifacts(self) -> None:
+        session = create_session(self.image)
+        session["execution"]["state"] = "PREVIEWED"
+        session["execution"]["state_history"].append("PREVIEWED")
+        with self.assertRaisesRegex(SessionValidationError, "rendered preview"):
+            select_candidate(session, "break", 200)
 
     def test_people_region_plan_participates_in_preview_cache_key(self) -> None:
         left = create_session(
@@ -197,7 +408,7 @@ class CandidateAndPreviewTests(unittest.TestCase):
         self.assertFalse(right_manifest["break"]["cache_hit"])
 
     def test_preview_cache_does_not_cross_requested_dimensions(self) -> None:
-        large = self.root / "large.png"
+        large = self.root / "large.jpg"
         _save_rgb(large, _synthetic_rgb(900, 600))
         session = create_session(large)
         output = self.root / "sized-previews"
@@ -209,7 +420,7 @@ class CandidateAndPreviewTests(unittest.TestCase):
     def test_preview_qc_marks_nonfinite_render_as_unexpected(self) -> None:
         session = create_session(self.image)
         session["candidates"][0]["offline_ops"].append(
-            {"op": "channel_matrix", "matrix": [[float("nan"), 0, 0], [0, 1, 0], [0, 0, 1]]}
+            {"op": "hsl_mixer", "adjustments": {"hue_blue": float("nan")}}
         )
         manifest = render_session(session, self.image, self.root / "qc-previews", long_edge=512)
         codes = {risk["code"] for risk in manifest["native"]["detected_risks"]}
@@ -232,7 +443,7 @@ class CandidateAndPreviewTests(unittest.TestCase):
         self.assertTrue(break_candidate["people_protection"]["required"])
 
     def test_declared_person_without_usable_mask_is_blocked_by_qc(self) -> None:
-        blue = self.root / "blue.png"
+        blue = self.root / "blue.jpg"
         _save_rgb(blue, np.full((64, 80, 3), [0.02, 0.08, 0.65], dtype=np.float32))
         session = create_session(blue, protected_people=True)
         manifest = render_session(session, blue, self.root / "blue-previews", long_edge=256)
@@ -256,7 +467,7 @@ class GradeSessionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.image = self.root / "proxy.png"
+        self.image = self.root / "proxy.jpg"
         _save_rgb(self.image, _synthetic_rgb(64, 48))
 
     def tearDown(self) -> None:
@@ -273,12 +484,12 @@ class GradeSessionTests(unittest.TestCase):
         self.assertEqual("stable-lightroom-identity-digest", session["target"]["source_digest"])
         self.assertNotEqual(session["target"]["source_digest"], session["target"]["proxy_digest"])
         self.assertEqual(session["target"]["proxy_digest"], session["photo_dna"]["source_digest"])
-        render_session(session, self.image, self.root / "previews", long_edge=256)
+        render_session(session, self.image, self.root / "previews", strengths={"break": 170}, long_edge=256)
         select_candidate(session, "break", 170)
         self.assertEqual("SELECTED", session["execution"]["state"])
         self.assertEqual("break", session["execution"]["desired"]["candidate_id"])
         validate_session(session, image_path=self.image)
-        changed = self.root / "changed.png"
+        changed = self.root / "changed.jpg"
         _save_rgb(changed, np.zeros((48, 64, 3), dtype=np.float32))
         with self.assertRaises(SessionValidationError):
             validate_session(session, image_path=changed)
@@ -309,7 +520,7 @@ class GradeSessionTests(unittest.TestCase):
 
     def test_explicit_collect_saves_recipe_dna_preview_and_readback(self) -> None:
         session = create_session(self.image)
-        render_session(session, self.image, self.root / "previews", long_edge=256)
+        render_session(session, self.image, self.root / "previews", strengths={"amplify": 112}, long_edge=256)
         select_candidate(session, "amplify", 112)
         session["execution"]["state_history"].extend(["SNAPSHOTTED", "APPLIED", "PERSON_PROTECTED", "VERIFIED"])
         session["execution"]["state"] = "VERIFIED"
@@ -327,22 +538,160 @@ class GradeSessionTests(unittest.TestCase):
         candidate = create_session(self.image)["candidates"][0]
         self.assertNotEqual(recipe_hash(candidate, 80), recipe_hash(candidate, 81))
 
+    def test_atomic_session_save_increments_revision_and_rejects_stale_writer(self) -> None:
+        destination = self.root / "grade-session.json"
+        session = create_session(self.image)
+        save_session(session, destination)
+        self.assertEqual(0, session["revision"])
+        first = load_session(destination)
+        stale = load_session(destination)
+        render_session(first, self.image, self.root / "atomic-previews", long_edge=256)
+        save_session(first, destination, expected_revision=0)
+        self.assertEqual(1, first["revision"])
+        render_session(stale, self.image, self.root / "stale-previews", long_edge=256)
+        with self.assertRaisesRegex(SessionValidationError, "stale GradeSession revision"):
+            save_session(stale, destination, expected_revision=0)
+        self.assertTrue(destination.with_suffix(".json.bak").exists())
+
+    def test_post_protection_digest_is_reacquired_and_used_for_readback(self) -> None:
+        session = create_session(
+            self.image,
+            photo_id="photo-7",
+            source_digest_override="stable-lightroom-identity-digest",
+            baseline_edit_digest="base-9",
+        )
+        session["execution"]["transaction_id"] = "tx-7"
+        session["execution"]["readback"] = {"baseline_edit_digest": "after-global-grade"}
+        current = {
+            "photo_id": "photo-7",
+            "filename": self.image.name,
+            "source_digest": "stable-lightroom-identity-digest",
+            "baseline_edit_digest": "after-person-mask",
+        }
+        with mock.patch.object(creative_grade, "_call_bridge", return_value=current):
+            digest = creative_grade._capture_post_protection_digest(session)
+        session["execution"]["person_protection"]["post_edit_digest"] = digest
+        reference = creative_grade._transaction_reference(session)
+        self.assertEqual("after-person-mask", reference["expected_current_edit_digest"])
+
+    def test_post_protection_digest_rejects_changed_target_identity(self) -> None:
+        session = create_session(
+            self.image,
+            photo_id="photo-7",
+            source_digest_override="stable-lightroom-identity-digest",
+            baseline_edit_digest="base-9",
+        )
+        changed = {
+            "photo_id": "different-photo",
+            "filename": self.image.name,
+            "source_digest": "stable-lightroom-identity-digest",
+            "baseline_edit_digest": "after-person-mask",
+        }
+        with mock.patch.object(creative_grade, "_call_bridge", return_value=changed):
+            with self.assertRaisesRegex(SessionValidationError, "photo_id"):
+                creative_grade._capture_post_protection_digest(session)
+
+    def test_transaction_reference_persists_restart_recovery_journal(self) -> None:
+        session = create_session(
+            self.image,
+            photo_id="photo-7",
+            source_digest_override="stable-lightroom-identity-digest",
+            baseline_edit_digest="base-9",
+        )
+        execution = session["execution"]
+        execution["transaction_id"] = "tx-restart"
+        execution["snapshot_id"] = "snapshot-42"
+        execution["snapshot"] = {
+            "id": "snapshot-42",
+            "name": "CreativeGrade pre tx-restart",
+            "created": True,
+        }
+        execution["pre_transaction_edit_digest"] = "base-9"
+        execution["applied_edit_digest"] = "settled-after-apply"
+        execution["pre_transaction_settings_summary"] = {
+            "Exposure2012": {"kind": "number", "value": 0.0},
+        }
+        execution["desired"] = {"compiled_parameters": {"exposure": 0.25}}
+        execution["readback"] = {"baseline_edit_digest": "after-apply"}
+        reference = creative_grade._transaction_reference(session)
+        self.assertEqual("snapshot-42", reference["snapshot_id"])
+        self.assertEqual("CreativeGrade pre tx-restart", reference["snapshot_name"])
+        self.assertEqual("base-9", reference["pre_transaction_edit_digest"])
+        self.assertEqual({"exposure": 0.25}, reference["compiled_parameters"])
+        self.assertEqual(
+            execution["pre_transaction_settings_summary"],
+            reference["pre_transaction_settings_summary"],
+        )
+        self.assertEqual("settled-after-apply", reference["expected_current_edit_digest"])
+
+    def test_rollback_merge_preserves_reviewed_desired_intent(self) -> None:
+        session = create_session(self.image)
+        session["execution"]["state"] = "APPLIED"
+        session["execution"]["state_history"] = ["ACQUIRE", "ANALYZED", "PREVIEWED", "SELECTED", "APPLIED"]
+        reviewed = copy.deepcopy(session["execution"]["desired"])
+        creative_grade._merge_execution_patch(session, {
+            "state": "ROLLED_BACK",
+            "desired": {"compiled_parameters": {"exposure": 0.25}},
+            "applied": {},
+            "readback": {"rollback": {"digest_verified": True}},
+        })
+        self.assertEqual(reviewed, session["execution"]["desired"])
+        self.assertEqual("ROLLED_BACK", session["execution"]["state"])
+
+    def test_rollback_merge_accepts_completed_session(self) -> None:
+        session = create_session(self.image)
+        session["execution"]["state"] = "DONE"
+        session["execution"]["state_history"] = [
+            "ACQUIRE", "ANALYZED", "PREVIEWED", "SELECTED", "SNAPSHOTTED",
+            "APPLIED", "PERSON_PROTECTED", "VERIFIED", "DONE",
+        ]
+        session["execution"]["transaction_id"] = "tx-done"
+        creative_grade._merge_execution_patch(session, {
+            "transaction_id": "tx-done",
+            "state": "ROLLED_BACK",
+            "state_history_append": ["ROLLED_BACK"],
+            "readback": {"rollback": {"digest_verified": True}},
+        })
+        self.assertEqual("ROLLED_BACK", session["execution"]["state"])
+        validate_session(session)
+
+    def test_legacy_migration_revokes_unreviewed_selection(self) -> None:
+        session = create_session(self.image)
+        render_session(session, self.image, self.root / "legacy-previews", long_edge=256)
+        select_candidate(session, "native")
+        session["selection"]["requested_strength"] = 100.0
+        session["execution"]["desired"]["requested_strength"] = 100.0
+        session["execution"]["desired"]["strength_factor"] = 1.0
+        session["execution"]["desired"]["recipe_hash"] = recipe_hash(session["candidates"][0], 100.0)
+        result = migrate_preview_contract(session)
+        self.assertEqual("PREVIEWED", result["state"])
+        self.assertIsNone(session["selection"])
+        self.assertEqual({}, session["execution"]["desired"])
+
+    def test_legacy_migration_records_preview_artifact_digest(self) -> None:
+        session = create_session(self.image)
+        render_session(session, self.image, self.root / "legacy-digest", long_edge=256)
+        del session["previews"]["native"]["artifact_digest"]
+        result = migrate_preview_contract(session)
+        self.assertTrue(any("artifact_digest" in change for change in result["changes"]))
+        validate_session(session)
+
     def test_parameter_compiler_obeys_zero_design_and_extrapolated_strength(self) -> None:
         specs = {
             "contrast": {"operation": "delta", "value": 20.0, "interpolation": "linear"},
-            "color_grade_shadow_hue": {"operation": "target", "value": 10.0, "interpolation": "circular_degrees"},
-            "color_grade_shadow_saturation": {"operation": "target", "value": 30.0, "interpolation": "linear"},
+            "hue_blue": {"operation": "delta", "value": 20.0, "interpolation": "linear"},
+            "saturation_blue": {"operation": "target", "value": 30.0, "interpolation": "linear"},
         }
-        baseline = {"contrast": 5.0, "color_grade_shadow_hue": 350.0, "color_grade_shadow_saturation": 10.0}
+        baseline = {"contrast": 5.0, "hue_blue": -10.0, "saturation_blue": 10.0}
         self.assertEqual(baseline, compile_lr_parameters(specs, baseline, 0))
         hundred = compile_lr_parameters(specs, baseline, 100)
         self.assertEqual(25.0, hundred["contrast"])
-        self.assertEqual(10.0, hundred["color_grade_shadow_hue"])
-        self.assertEqual(30.0, hundred["color_grade_shadow_saturation"])
+        self.assertEqual(10.0, hundred["hue_blue"])
+        self.assertEqual(30.0, hundred["saturation_blue"])
         two_hundred = compile_lr_parameters(specs, baseline, 200)
         self.assertEqual(45.0, two_hundred["contrast"])
-        self.assertEqual(30.0, two_hundred["color_grade_shadow_hue"])
-        self.assertEqual(50.0, two_hundred["color_grade_shadow_saturation"])
+        self.assertEqual(30.0, two_hundred["hue_blue"])
+        self.assertEqual(50.0, two_hundred["saturation_blue"])
 
     def test_applied_cannot_skip_person_protected_audit_state(self) -> None:
         session = create_session(self.image)
@@ -390,13 +739,16 @@ class CreativeScenarioTests(unittest.TestCase):
     def test_five_scene_classes_get_distinct_routes(self) -> None:
         for name, rgb, people in self._scenes():
             with self.subTest(scene=name):
-                suffix = ".jpg" if name == "pregraded-jpeg" else ".png"
+                suffix = ".jpg"
                 path = self.root / f"{name}{suffix}"
                 _save_rgb(path, rgb)
                 boxes = [{"x": 31 / 96, "y": 13 / 72, "width": 36 / 96, "height": 52 / 72}] if people else False
                 dna = analyze_photo(path, protected_people=boxes)
                 candidates = build_candidates(dna)
-                signatures = {tuple(operation["op"] for operation in candidate["offline_ops"]) for candidate in candidates}
+                signatures = {
+                    json.dumps(candidate["lr_recipe"]["parameters"], sort_keys=True)
+                    for candidate in candidates
+                }
                 self.assertEqual(3, len(signatures))
                 rendered = [
                     render_candidate(rgb.astype(np.float32), candidate, dna, candidate["intensity"]["default"], 55)

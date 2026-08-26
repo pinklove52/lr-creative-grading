@@ -16,8 +16,12 @@ Required fields:
 | candidates | array | Native, Amplify, and Break recipes |
 | selection | object or null | The user's single choice |
 | execution | object | Transaction, readback, protection, and verification |
+| scope_id | string | Exact runtime scope; current value is `jpg-core33-v1` |
+| scope_digest | string | SHA-256 of the Core33 scope bytes used to build the session |
 
 previews is an optional object added by render. Session IDs, timestamps, format, proxy paths, and baseline-kind labels are optional extensions rather than required core fields.
+
+session_id and revision are persisted concurrency extensions. Every CLI mutation checks the loaded revision and writes through a temporary file, flushes it, retains one .bak, and atomically replaces the session. Reject a stale expected revision instead of overwriting newer state.
 
 ## Target binding
 
@@ -29,7 +33,7 @@ target requires:
 - proxy_digest: SHA-256 of the actual current-render JPEG bytes analyzed by PhotoDNA;
 - baseline_edit_digest: stable digest of the current Lightroom develop settings, or null for a documented file-only baseline.
 
-format, proxy_path, baseline_kind, and acquired_at may be added as optional extensions.
+format, proxy_path, baseline_kind, live_applicable, and acquired_at may be added as optional extensions. acquire-live copies the proxy into source/baseline.jpg and marks live_applicable true. Ordinary file analysis marks live_applicable false. Never upgrade a file-only session by binding the active Lightroom photo later.
 
 In file mode, source_digest and proxy_digest may be the same. photo_dna.source_digest equals target.proxy_digest because PhotoDNA describes those rendered bytes. The source, proxy, and baseline digests are pinned at ACQUIRE. Never silently update them after the user switches photos or edits the baseline. Start a new session instead.
 
@@ -62,7 +66,7 @@ candidates must be ordered native, amplify, break and contain exactly one record
 
 Every scalar lr_recipe parameter is an object with operation delta or target, numeric value, and interpolation linear or circular_degrees. Bare numeric values are invalid unless lr_recipe explicitly declares legacy_numeric_mode delta; that compatibility mode must be normalized before application. Curves use operation target plus curve_points.
 
-recipe_hash, cache_key, preview paths, dimensions, and cache-hit status belong to the optional previews manifest or execution.desired after selection. Cache keys derive from proxy_digest plus recipe_hash. preset_seed_uuid is an optional recipe extension.
+Every preview entry records strength, canonical recipe_hash, preview_render_hash, artifact_digest, cache_key, absolute preview path, QC, and detected risks. recipe_hash covers the candidate and exact strength; preview_render_hash additionally covers renderer/version/dimensions. Do not interchange them. Cache keys derive from proxy_digest plus preview_render_hash. preset_seed_uuid is an optional recipe extension.
 
 Do not encode Break as Amplify with a larger strength. Its intent and operator graph must be distinct.
 
@@ -72,6 +76,10 @@ selection remains null through PREVIEWED. The select command writes:
 
 - candidate_id;
 - requested_strength from 0 through 200;
+
+The selected candidate and requested_strength must exactly match an existing preview entry. Its recipe_hash must match the canonical candidate/strength hash, artifact_digest must match the preview bytes, the artifact must exist, and detected_risks must contain no unexpected item. Rerender and re-QC whenever the user changes strength.
+
+For a legacy session, migrate may normalize preview recipe/artifact digests. If the recorded selection does not exactly match the reviewed preview, migration must revoke selection, clear execution.desired, and return to PREVIEWED. It must never fabricate a preview authorization.
 
 named_mix, user_note, and selected_at are optional extensions. Selecting also writes execution.desired with:
 
@@ -102,6 +110,8 @@ execution requires:
 - person_protection: required and result, initialized as required true/false from PhotoDNA with result pending.
 
 At PERSON_PROTECTED, VERIFIED, or DONE, a person image must have result protected, compensated, or verified. A confirmed no-person image must have result not_required. snapshot_id, verification, and rollback are optional execution extensions written by live Lightroom stages.
+
+PERSON_PROTECTED also records post_edit_digest from a fresh get_target_photo after proving photo identity is unchanged. This digest distinguishes the authorized local protection edit from an unrelated later Lightroom change and becomes expected_current_edit_digest for final readback.
 
 An absent recipe field means leave the existing Lightroom setting unchanged. It never means write zero.
 

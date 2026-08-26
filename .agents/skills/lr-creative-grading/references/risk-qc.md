@@ -37,6 +37,8 @@ Treat these as unexpected:
 - implausible skin gradients, collapsed facial depth, or destroyed skin texture;
 - a changed crop, healing operation, mask, or lens correction outside recipe scope;
 - proxy/preview labels mapped to the wrong candidate;
+- selection strength, recipe hash, or artifact digest that was not reviewed;
+- a rendered direction that contradicts its declared creative_intent;
 - bridge disconnect or failed rollback.
 
 ## Preflight
@@ -61,6 +63,7 @@ Render every candidate from the same baseline, crop, dimensions, and resampling.
 - subject priority and visual anchors;
 - gradients, halos, banding, noise, and texture;
 - label, recipe hash, and cache-key correctness.
+- intent-specific evidence such as low-key shadow direction, luminous mean-light direction, and protected anchor behavior; record preview_intent_mismatch when the authored direction was not achieved.
 
 Offline previews show intent, not proof of Adobe pixel equivalence.
 

@@ -35,6 +35,8 @@ Input may include target and parameters. Return exact current values only for th
 
 Prefer the complete validated GradeSession as input. The MCP layer validates SELECTED state/history and normalizes its four-field apply target, selection, selected candidate lr_recipe, execution.desired, optional lr_recipe.preset_uuid, history_name, strict flag, and allow_snapshot_fallback into the Lua request. Lightroom generates transaction_id only after preflight and snapshot creation.
 
+The MCP layer also requires live_applicable not to be false and requires the selected preview strength and recipe_hash to match execution.desired, with a non-empty artifact_digest and no unexpected preview risk. Python validates the local artifact bytes before calling MCP.
+
 Before changing anything, switch to Develop when supported, revalidate photo_id, filename, source_digest, and baseline_edit_digest, resolve delta/target parameter specs against the current baseline and selected strength, validate every parameter and range, and create the snapshot. Apply the preset seed by UUID when supplied, then submit the complete supported dynamic setting group using LrDevelopController with a multi-adjustment threshold.
 
 If any preflight check fails, apply nothing. If application partially fails, return the exact applied subset and trigger rollback.
@@ -62,6 +64,8 @@ Input contains transaction_id, or a GradeSession whose execution.transaction_id 
 9. rollback on unexpected failure.
 
 Unknown parameters, out-of-range values, target changes, module-switch failures, bridge disconnects, and partial application are hard failures. Do not silently truncate, clamp, skip, or continue.
+
+The protect/protect-not-required stage reacquires get_target_photo, proves photo_id, filename, and source_digest are unchanged, and records baseline_edit_digest as person_protection.post_edit_digest. This explicitly authorizes the expected local-mask digest change. Final readback passes that digest as expected_current_edit_digest and still rejects any later unrecorded edit.
 
 ## Error contract
 

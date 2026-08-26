@@ -1,6 +1,14 @@
 const STRENGTH_MIN = 0;
 const STRENGTH_MAX = 200;
 
+import {
+  CORE33_SCOPE,
+  CORE33_SCOPE_DIGEST,
+  assertCore33Format,
+  assertCore33Parameter,
+  assertCore33Scope,
+} from "./core33-scope.mjs";
+
 export class ContractError extends Error {
   constructor(code, message, details = undefined) {
     super(message);
@@ -39,6 +47,7 @@ export function normalizeTarget(input, { required = true } = {}) {
       target.baseline_edit_digest,
       "target.baseline_edit_digest",
     ),
+    format: assertCore33Format(target.format, ContractError),
   };
   return normalized;
 }
@@ -135,6 +144,7 @@ function normalizeParameterMap(value, name, legacyNumericMode) {
   const output = {};
   for (const [key, setting] of Object.entries(input)) {
     assertNonEmptyString(key, `${name} key`);
+    assertCore33Parameter(key, ContractError);
     output[key] = normalizeParameterSpec(setting, `${name}.${key}`, legacyNumericMode);
   }
   return output;
@@ -207,6 +217,33 @@ function hasUnexpectedRisk(candidate) {
   return false;
 }
 
+function validateReviewedPreview(session, candidateId, strength, desiredRecipeHash) {
+  const previews = assertObject(session.previews, "previews");
+  const preview = assertObject(previews[candidateId], `previews.${candidateId}`);
+  if (typeof preview.strength !== "number" || Math.abs(preview.strength - strength) > 1e-12) {
+    throw new ContractError(
+      "UNREVIEWED_STRENGTH",
+      `Selected strength ${strength}% differs from the reviewed ${String(preview.strength)}% preview`,
+    );
+  }
+  if (preview.recipe_hash !== desiredRecipeHash) {
+    throw new ContractError(
+      "UNREVIEWED_RECIPE",
+      "Selected preview recipe_hash differs from execution.desired.recipe_hash",
+    );
+  }
+  if (typeof preview.path !== "string" || preview.path.trim() === "") {
+    throw new ContractError("INVALID_REQUEST", "Selected preview path must be a non-empty string");
+  }
+  assertNonEmptyString(preview.artifact_digest, `previews.${candidateId}.artifact_digest`);
+  if (!/^[a-f0-9]{64}$/i.test(preview.artifact_digest)) {
+    throw new ContractError("INVALID_REQUEST", `previews.${candidateId}.artifact_digest must be a SHA-256 digest`);
+  }
+  if (Array.isArray(preview.detected_risks) && preview.detected_risks.some(riskIsUnexpected)) {
+    throw new ContractError("UNEXPECTED_RISK", "Selected preview contains an unexpected risk");
+  }
+}
+
 function historyTailState(session) {
   const history =
     session.execution?.state_history ??
@@ -243,6 +280,19 @@ function validateSelectedSession(session, candidate, selection, candidateId, nor
     );
   }
   const execution = assertObject(session.execution, "execution");
+  if (typeof session.session_id !== "string" || session.session_id.trim() === "") {
+    throw new ContractError("INVALID_REQUEST", "GradeSession session_id must be a non-empty string");
+  }
+  if (!Number.isInteger(session.revision) || session.revision < 0) {
+    throw new ContractError("INVALID_REQUEST", "GradeSession revision must be a non-negative integer");
+  }
+  if (session.target?.live_applicable !== true) {
+    throw new ContractError("FILE_ONLY_SESSION", "File-only GradeSession cannot be applied to Lightroom");
+  }
+  assertCore33Scope(
+    { scope_id: session.scope_id, scope_digest: session.scope_digest },
+    ContractError,
+  );
   if (execution.state !== "SELECTED") {
     throw new ContractError(
       "INVALID_SESSION_STATE",
@@ -306,6 +356,7 @@ function validateSelectedSession(session, candidate, selection, candidateId, nor
     );
   }
   assertNonEmptyString(desired.recipe_hash, "execution.desired.recipe_hash");
+  validateReviewedPreview(session, candidateId, strength, desired.recipe_hash);
   // recipe_hash is strength-specific and therefore belongs to execution.desired,
   // not the PREVIEWED candidate. Candidate/strength/spec consistency is checked
   // structurally above; the preview engine owns the canonical hash algorithm.
@@ -406,6 +457,11 @@ export function compileApplyTransaction(input, { requireFullSession = false } = 
     candidateId = candidate.candidate_id ?? candidate.id ?? "direct";
   }
 
+  const scope = assertCore33Scope(
+    request.scope ?? { scope_id: request.scope_id, scope_digest: request.scope_digest },
+    ContractError,
+  );
+
   const recipe = normalizeRecipe(candidate.lr_recipe ?? request.lr_recipe);
   if (Array.isArray(request.candidates)) {
     validateSelectedSession(request, candidate, selection, candidateId, recipe);
@@ -417,6 +473,7 @@ export function compileApplyTransaction(input, { requireFullSession = false } = 
   return {
     session_version: sessionVersion,
     target,
+    scope,
     candidate: {
       candidate_id: String(candidateId),
       route: candidate.route ?? candidate.type ?? candidate.kind ?? null,
@@ -441,10 +498,24 @@ export function compileApplyTransaction(input, { requireFullSession = false } = 
   };
 }
 
+export const CORE33_CONTRACT = Object.freeze({
+  scope_id: CORE33_SCOPE.scope_id,
+  scope_digest: CORE33_SCOPE_DIGEST,
+});
+
 export function normalizeTransactionReference(input) {
   const value = assertObject(input, "transaction reference");
   const transactionId =
     value.transaction_id ?? value.execution?.transaction_id ?? value.execution?.id;
+  const snapshot = value.snapshot ?? value.execution?.snapshot ?? {};
+  const snapshotId = value.snapshot_id ?? value.execution?.snapshot_id ?? snapshot.id;
+  const snapshotName = value.snapshot_name ?? snapshot.name;
+  const preTransactionDigest =
+    value.pre_transaction_edit_digest ?? value.execution?.pre_transaction_edit_digest;
+  const compiledParameters =
+    value.compiled_parameters ?? value.execution?.desired?.compiled_parameters;
+  const preTransactionSettingsSummary =
+    value.pre_transaction_settings_summary ?? value.execution?.pre_transaction_settings_summary;
   return {
     transaction_id: assertNonEmptyString(transactionId, "transaction_id"),
     target: value.target ? normalizeTarget(value.target) : undefined,
@@ -455,6 +526,25 @@ export function normalizeTransactionReference(input) {
             value.expected_current_edit_digest,
             "expected_current_edit_digest",
           ),
+    snapshot_id:
+      snapshotId == null ? undefined : assertNonEmptyString(snapshotId, "snapshot_id"),
+    snapshot_name:
+      snapshotName == null ? undefined : assertNonEmptyString(snapshotName, "snapshot_name"),
+    pre_transaction_edit_digest:
+      preTransactionDigest == null
+        ? undefined
+        : assertNonEmptyString(preTransactionDigest, "pre_transaction_edit_digest"),
+    compiled_parameters:
+      compiledParameters == null
+        ? undefined
+        : structuredClone(assertObject(compiledParameters, "compiled_parameters")),
+    pre_transaction_settings_summary:
+      preTransactionSettingsSummary == null
+        ? undefined
+        : structuredClone(assertObject(
+            preTransactionSettingsSummary,
+            "pre_transaction_settings_summary",
+          )),
   };
 }
 
